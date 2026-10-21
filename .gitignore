@@ -1,0 +1,6 @@
+work/
+.venv/
+__pycache__/
+.pytest_cache/
+data/*.xlsx
+!data/.gitkeep
