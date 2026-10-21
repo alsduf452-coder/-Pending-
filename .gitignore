@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 data/*.xlsx
 !data/.gitkeep
+
+data/*.sqlite3
+data/*.sqlite3-*
