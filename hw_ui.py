@@ -182,6 +182,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
 .spacing-cell {min-height:135px;padding:12px;border:1px solid #cbd5e1;display:flex;flex-direction:column;gap:7px;color:#172b4d}
 .spacing-cell strong {font-size:27px;line-height:1.25;overflow-wrap:anywhere}.spacing-cell small {font-size:12px}.spacing-cell span {font-size:11px;color:#475569}
 .spacing-center {background:#e0f2fe;border:2px solid #0891b2}.measurement-svg {width:100%;height:auto;display:block;background:#f1f5f9;border:1px solid #94a3b8;border-radius:10px}
+.flatness-values {width:100%;border-collapse:collapse;table-layout:fixed;background:#f1f5f9;color:#172b4d}.flatness-values th,.flatness-values td {border:1px solid #94a3b8;padding:10px 3px;text-align:center}.flatness-values th {background:#cbd5e1;font-size:12px}.flatness-values td small {display:block;color:#64748b;font-size:9px;text-align:left}.flatness-values td strong {display:block;background:#e2e8f0;border-radius:4px;padding:7px 0;font-size:15px}.flatness-values th small {display:block;font-size:10px;font-weight:normal}
 .measure-legend {height:15px;border-radius:9px;border:1px solid #64748b;margin:10px 0}
 </style>""",unsafe_allow_html=True)
     scoped=filter_rows(store.records(path,kind),equipment,chamber)
@@ -203,7 +204,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
         st.session_state[selected_key]=selected
     r=indexed[selected]
     st.subheader(f"{r['chamberId']} · {'Spacing' if spacing else r['type']+' Flatness'} · {r['measuredAt']}")
-    st.caption('아래 챔버별 측정 이력의 보기·수정 버튼으로 다른 기록을 열 수 있습니다.')
+    st.caption('챔버별 측정 이력의 보기·수정 버튼으로 다른 기록을 열 수 있습니다.')
     st.write('측정기:',r.get('gaugeTool',''),' / 단위:',r.get('unit',''))
     st.caption(f"S/N: {r.get('partSnAtMeasurement',r.get('partSn',''))}")
     st.caption('측정 구분: '+str(r.get('timing') or '미기재'))
@@ -211,11 +212,11 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     if r.get('isAmbiguous'):st.warning(r.get('ambiguityReason') or '원본에서 검토 대상으로 표시된 측정입니다. 값을 자동 보정하지 않았습니다.')
     source=r.get('source',{})
     if source:st.caption(f"원문 출처: {source.get('fileName','')} / {source.get('sheetName','')} / {source.get('cellRange','')}")
+    measurement_history(rows,kind,equipment)
     mode_key=f"measurement_mode_{kind}_{equipment}_{r['chamberId']}_{flatness_type or 'Spacing'}"
     view_mode=st.radio('측정 보기 방식',['단일 상세','작업 전후 비교'],horizontal=True,key=mode_key)
     if view_mode=='작업 전후 비교':
         comparison_view(rows,r,kind,equipment)
-        measurement_history(rows,kind,equipment)
         measurement_export(rows,kind,spacing)
         return
     titles=st.columns(2,gap='large')
@@ -235,7 +236,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
         draft_values=[None]*9
         for ri,positions in enumerate(store.POINT_LAYOUT):
             for ci,point in enumerate(positions):draft_values[point-1]=draft_grid[ri][ci]
-    left_panel.markdown(spacing_diagram_svg(draft_values,table_mode=True) if spacing else flatness_diagram_svg(draft_grid,table_mode=True),unsafe_allow_html=True)
+    left_panel.markdown(spacing_table_html(draft_values) if spacing else flatness_table_html(draft_grid),unsafe_allow_html=True)
     right_panel.markdown(spacing_diagram_svg(draft_values) if spacing else flatness_diagram_svg(draft_grid),unsafe_allow_html=True)
     stats=measurement_stats(draft_grid)
     if not spacing:
@@ -244,7 +245,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
         st.caption(f"낮은 값 · 파랑: {measurement_number(stats['최소값'])} mils ↔ 높은 값 · 빨강: {measurement_number(stats['최댓값'])} mils · 회색/—: 미측정")
         if stats['최소값'] is not None and stats['최소값']==stats['최댓값']:st.caption('모든 실측값이 같아 도면은 중립 회색으로 표시합니다.')
     table([{'최소값(mils)':stats['최소값'],'최댓값(mils)':stats['최댓값'],'Max−Min(mils)':stats['Max−Min'],'측정 개수':f"{stats['측정 수']}/{9 if spacing else 35}"}])
-    st.caption('숫자표와 위치도는 같은 좌표·높이 기준으로 정렬됩니다. 빈칸은 미측정, 0은 실측값입니다. 편집 후 저장해야 DB가 변경됩니다.')
+    st.caption('왼쪽 실측 데이터와 오른쪽 위치도는 같은 행·열 순서의 값을 표시합니다. 빈칸은 미측정, 0은 실측값입니다. 편집 후 저장해야 DB가 변경됩니다.')
     if spacing:st.caption('885 mils는 AI Studio 원본의 시각 비교 기준입니다. 규격이나 양불 판정 기준이 아닙니다.')
     def reset_preview():st.session_state.pop(editor_key,None)
     st.button('입력 되돌리기 · 저장된 값',key=f'reset_{editor_key}',on_click=reset_preview)
@@ -267,7 +268,6 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
             surface=go.Figure(go.Surface(z=draft_grid,x=list(range(1,8)),y=list(range(1,6)),colorscale=surface_colors,connectgaps=False,lighting={'ambient':.65,'diffuse':.75,'specular':.18,'roughness':.85},lightposition={'x':100,'y':100,'z':150},colorbar={'title':'mils'}))
             surface.update_layout(height=420,scene={'xaxis_title':'Col · G/V → Window','yaxis_title':'Row','zaxis_title':'mils'})
             st.plotly_chart(surface,use_container_width=True)
-    measurement_history(rows,kind,equipment)
     with st.expander('측정 정보 · 날짜/SN/비고 수정',expanded=st.session_state.get('measurement_edit_requested')==r['id']):
         measurement_form(path,kind,equipment,chambers,all_logs,r)
     with st.expander('선택 측정의 필드별 수정 기록 · 상세 로그'):show_audit(path,r['id'])
@@ -562,6 +562,21 @@ def flatness_color(value,low,high):
     ratio=max(0,min(1,(value-low)/(high-low)))
     a=(37,99,235);b=(239,68,68)
     return '#'+''.join(f'{round(x+(y-x)*ratio):02x}' for x,y in zip(a,b))
+
+
+def flatness_table_html(grid):
+    from html import escape
+    labels=['G/V 상단','상단','Center','하단','Window 하단']
+    parts=['<table class="flatness-values" aria-label="Flatness 실측 데이터 표"><thead><tr><th>구분</th>']
+    parts.extend(f'<th>Col {col}</th>' for col in range(1,8))
+    parts.append('</tr></thead><tbody>')
+    for ri,row in enumerate(grid,1):
+        parts.append(f'<tr><th>Row {ri}<small>{labels[ri-1]}</small></th>')
+        for ci,value in enumerate(row,1):
+            parts.append(f'<td><small>R{ri}C{ci}</small><strong>{escape(measurement_number(value))}</strong></td>')
+        parts.append('</tr>')
+    parts.append('</tbody></table>')
+    return ''.join(parts)
 
 
 def spacing_table_html(values):

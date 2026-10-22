@@ -206,12 +206,16 @@ def test_monthly_controls_and_card_actions(tmp_path):
 
 
 def test_measurement_diagrams_and_color_direction():
-    from hw_ui import flatness_color, flatness_diagram_svg, spacing_diagram_svg, spacing_table_html, MEASURE_BLUE, MEASURE_RED
+    from hw_ui import flatness_color, flatness_diagram_svg, spacing_diagram_svg, spacing_table_html, flatness_table_html, MEASURE_BLUE, MEASURE_RED
     assert flatness_color(-40,-40,19)==MEASURE_BLUE
     assert flatness_color(19,-40,19)==MEASURE_RED
     assert flatness_color(None,-40,19)=='#e2e8f0'
     assert flatness_color(0,0,0)=='#64748b'
     grid=[[-40,19,0,None,1,2,3]]*5
+    numeric=flatness_table_html(grid)
+    assert '<table' in numeric and '<svg' not in numeric
+    assert 'Row 5' in numeric and 'Col 7' in numeric and 'R5C7' in numeric
+    assert '>0<' in numeric and '미측정' in numeric
     svg=flatness_diagram_svg(grid)
     assert 'R1C1' in svg and 'R5C7' in svg and 'flatshade' in svg
     assert MEASURE_BLUE in svg and MEASURE_RED in svg

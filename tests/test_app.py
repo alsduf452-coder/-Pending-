@@ -4,21 +4,22 @@ def test_actual_app():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     if not app.metric:
-        app.sidebar.radio[0].set_value('샘플 데이터').run()
+        app.radio(key='data_mode').set_value('샘플 데이터').run()
     assert int(app.metric[0].value)>0
     app.text_input(key='keyword').set_value('NoSuchKeyword123456').run()
     assert not app.exception and app.metric[0].value=='0'
     app.text_input(key='keyword').set_value('').run()
-    app.sidebar.radio[0].set_value('샘플 데이터').run()
+    app.radio(key='data_mode').set_value('샘플 데이터').run()
     assert not app.exception and app.warning
-    app.sidebar.radio[1].set_value('보조 시트').run()
+    app.radio(key='pending_scope').set_value('보조 시트').run()
     assert not app.exception and app.metric[0].value=='0'
 
 def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
-    assert any('HW-04' in x.value for x in app.caption)
+    assert any('HW-05' in x.value for x in app.caption)
+    assert app.sidebar.radio(key='main_page').value=='Pending 현황'
     assert app.radio(key='main_page').options==['Pending 현황','REV 관리','설비 H/W 이력관리']
     app.radio(key='main_page').set_value('REV 관리').run()
     assert not app.exception
@@ -32,14 +33,14 @@ def test_title_and_visible_rev_navigation():
         assert any('검색 조건' in x.value for x in app.info)
     app.radio(key='main_page').set_value('Pending 현황').run()
     assert not app.exception
-    app.sidebar.radio[0].set_value('샘플 데이터').run()
+    app.radio(key='data_mode').set_value('샘플 데이터').run()
     app.radio(key='main_page').set_value('REV 관리').run()
     assert not app.exception
     assert any('샘플 데이터에는 REV 이력이 없습니다' in x.value for x in app.info)
 
 def test_list_field_filter_and_removed_raw_expander():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
-    app.sidebar.radio[0].set_value('샘플 데이터').run()
+    app.radio(key='data_mode').set_value('샘플 데이터').run()
     assert not app.exception
     assert not any('원문 전체' in x.label for x in app.expander)
     dashboard_total=app.metric[0].value
@@ -55,7 +56,7 @@ def test_list_field_filter_and_removed_raw_expander():
 
 def test_binary_status_and_clickable_counts():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
-    app.sidebar.radio[0].set_value('샘플 데이터').run()
+    app.radio(key='data_mode').set_value('샘플 데이터').run()
     assert not app.exception
     assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
     assert not any('확인 필요' in x.value for x in app.caption)

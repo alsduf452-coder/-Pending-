@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 PENDING 통합 관리'
-APP_VERSION='HW-04'
+APP_VERSION='HW-05'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -47,14 +47,15 @@ def parse_revision(data): return load_revision(data)
 
 st.sidebar.markdown(f'<div class="sidebar-brand">{LOGO_SVG}<span>{APP_NAME}</span></div>',unsafe_allow_html=True)
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
+page=st.sidebar.radio('화면 선택',['Pending 현황','REV 관리','설비 H/W 이력관리'],key='main_page')
+pending_filters=st.sidebar.container() if page=='Pending 현황' else None
 upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
 saved_default = Path(__file__).parent/'data'/'default.xlsx'
 db_path = Path(__file__).parent/'data'/'pending.sqlite3'
-mode = st.sidebar.radio('데이터 선택',['실제 Excel','샘플 데이터'])
+mode = st.sidebar.radio('데이터 선택',['실제 Excel','샘플 데이터'],key='data_mode')
 st.title(APP_NAME)
 st.caption(f'화면 버전 {APP_VERSION}')
-page=st.radio('화면 선택',['Pending 현황','REV 관리','설비 H/W 이력관리'],horizontal=True,key='main_page')
 with st.sidebar.expander('실행 정보 확인'):
     st.text(f'화면 버전: {APP_VERSION}')
     st.text(f'실행 파일: {Path(__file__).resolve()}')
@@ -254,13 +255,14 @@ else:
     st.info('샘플 모드에서는 실제 항목을 저장하지 않습니다. 실제 Excel 모드에서 등록해주세요.')
 st.caption(f'데이터 출처: {source} · 원본 보존 · 외부 AI 전송 없음')
 df=binary_status(df)
-scope=st.sidebar.radio('조회 범위',['주요 5개 분야','보조 시트','모든 시트'])
+pending_filters.markdown('#### Pending 현황 필터')
+scope=pending_filters.radio('조회 범위',['주요 5개 분야','보조 시트','모든 시트'],key='pending_scope')
 count_context=(source_key(content) if mode=='실제 Excel' else 'sample',scope)
 if st.session_state.get('count_context')!=count_context:
     reset_counts()
     st.session_state['count_context']=count_context
 base = df[df['분야'].isin(MAIN)] if scope=='주요 5개 분야' else df[~df['분야'].isin(MAIN)] if scope=='보조 시트' else df
-with st.sidebar:
+with pending_filters:
     eq=st.multiselect('설비',sorted(base['설비'].unique()),default=sorted(base['설비'].unique()))
     fields=st.multiselect('분야',sorted(base['분야'].unique()),default=sorted(base['분야'].unique()))
     states=st.multiselect('상태',['완료','미완료'],default=['완료','미완료'])
