@@ -5,7 +5,9 @@ import streamlit as st
 from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision
 
-st.set_page_config(page_title='양산 설비 Pending 통합 관리',page_icon='📊',layout='wide')
+APP_NAME='양산 설비 Pending 통합 관리'
+APP_VERSION='REV-02'
+st.set_page_config(page_title=APP_NAME,page_icon='📊',layout='wide')
 st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
 [data-testid="stMetric"] {background:white;border:1px solid #e4e9f2;border-radius:14px;padding:20px}
@@ -18,14 +20,19 @@ def parse(data): return load_pending(data)
 @st.cache_data(show_spinner=False)
 def parse_revision(data): return load_revision(data)
 
-st.sidebar.title('📊 양산 설비 Pending 통합 관리')
+st.sidebar.title(f'📊 {APP_NAME}')
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
 upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
 saved_default = Path(__file__).parent/'data'/'default.xlsx'
 db_path = Path(__file__).parent/'data'/'pending.sqlite3'
 mode = st.sidebar.radio('데이터 선택',['실제 Excel','샘플 데이터'])
-st.title('양산 설비 Pending 통합 관리')
+st.title(APP_NAME)
+st.caption(f'화면 버전 {APP_VERSION}')
+page=st.radio('화면 선택',['Pending 현황','REV 관리'],horizontal=True,key='main_page')
+with st.sidebar.expander('실행 정보 확인'):
+    st.text(f'화면 버전: {APP_VERSION}')
+    st.text(f'실행 파일: {Path(__file__).resolve()}')
 st.caption('CVD15I / CVD45I · 현황을 한눈에, 원문까지 정확하게')
 try:
     if mode == '샘플 데이터':
@@ -44,6 +51,57 @@ except Exception as exc:
     st.error(f'파일을 읽을 수 없습니다: {exc}')
     st.info('암호가 없는 .xlsx 파일인지, 원본과 동일한 시트·열 구조인지 확인해주세요.')
     st.stop()
+if page == 'REV 관리':
+    st.header('REV 관리 · 통합 이력')
+    st.caption(f'데이터 출처: {source}')
+    if mode == '샘플 데이터':
+        st.info('샘플 데이터에는 REV 이력이 없습니다. 왼쪽에서 실제 Excel을 선택해주세요.')
+        st.stop()
+    revision=parse_revision(content)
+    if not revision['sheet']:
+        st.warning('선택한 Excel에서 REV 관리 시트를 찾지 못했습니다. 첫 시트 이름이 Rev 관리인지 확인해주세요.')
+        st.stop()
+    st.subheader(revision['title'] or 'CVD15I / CVD45I Pending List 통합 이력 관리')
+    st.caption(f"라인: {revision['line'] or '미기재'} · 공정: {revision['process'] or '미기재'} · 원본 시트: {revision['sheet']}")
+    st.info('Excel 원본에 저장된 요약과 REV 이력입니다. 앱에서 추가·수정한 내용은 「Pending 현황」에서 확인하세요.')
+    totals=revision['summary']
+    st.subheader('분야별 요약 · Excel 기준')
+    # Excel과 같은 가로 배열. 저장된 수식 값이 없으면 추정하지 않습니다.
+    st.dataframe(totals.set_index('구분').T,use_container_width=True)
+    st.caption('총 건수·조치 건수·조치율은 Excel 저장값이며 수식을 재계산하지 않습니다. 고객사 요청은 Total과 별도 집계입니다.')
+    revisions=revision['history']
+    if revisions.empty:
+        st.info('REV 변경 이력이 없습니다.')
+        st.stop()
+    last=revisions.iloc[-1]
+    st.success(f"원본 마지막 REV: {last['Rev No.']} · 변경일: {last['변경일자']} · 이력 {len(revisions)}건")
+    st.subheader('REV 변경 이력')
+    rev_query=st.text_input('REV 이력 검색',placeholder='변경내용 / 작성자 / 키워드 검색',key='rev_search')
+    filtered=revisions
+    for term in rev_query.split():
+        filtered=filtered[filtered.astype(str).agg(' '.join,axis=1).str.contains(term,case=False,regex=False)]
+    if filtered.empty:
+        st.info('검색 조건에 맞는 REV 이력이 없습니다.')
+    else:
+        # escape=True로 Excel의 HTML을 실행하지 않고, 줄바꿈이 보이는 전체 표를 제공합니다.
+        table=filtered.drop(columns=['원본 행']).to_html(index=False,escape=True,classes='rev-history-table')
+        st.markdown("""<style>
+        .rev-history-scroll {overflow:auto;max-height:700px;border:1px solid #dbe3ef;border-radius:10px;background:white}
+        .rev-history-table {width:100%;border-collapse:collapse;font-size:14px;min-width:950px}
+        .rev-history-table th {background:#e7eef9;padding:12px;text-align:left;position:sticky;top:0;z-index:1}
+        .rev-history-table td {padding:12px;vertical-align:top;white-space:pre-wrap;border:1px solid #e3e9f2;overflow-wrap:anywhere}
+        .rev-history-table td:nth-child(3) {min-width:380px;width:46%}
+        .rev-history-table tr:nth-child(even) {background:#f7f9fc}
+        </style>"""+'<div class="rev-history-scroll">'+table+'</div>',unsafe_allow_html=True)
+        st.caption('표 안에서 스크롤하면 전체 이력을 볼 수 있습니다. 변경내용은 줄바꿈을 유지합니다.')
+        selected_rev=st.selectbox('REV 상세 선택',list(reversed(filtered.index.tolist())),format_func=lambda i:f"REV {filtered.loc[i,'Rev No.']} · {filtered.loc[i,'변경일자']}")
+        st.subheader(f"REV {filtered.loc[selected_rev,'Rev No.']} 상세")
+        for field in ['구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행']:
+            st.text(f"{field}: {filtered.loc[selected_rev,field]}")
+    st.download_button('REV 이력 CSV 다운로드',safe_export(filtered).to_csv(index=False).encode('utf-8-sig'),'excel_rev_history.csv','text/csv')
+    st.stop()
+
+st.caption('Excel 첫 시트의 요약과 변경 이력은 위쪽 「REV 관리」 메뉴에서 볼 수 있습니다.')
 if mode == '실제 Excel':
     if upload is not None and st.sidebar.button('이 Excel을 기본값으로 저장'):
         try:
@@ -89,32 +147,6 @@ if mode == '실제 Excel':
 else:
     st.info('샘플 모드에서는 실제 항목을 저장하지 않습니다. 실제 Excel 모드에서 등록해주세요.')
 st.caption(f'데이터 출처: {source} · 원본 보존 · 외부 AI 전송 없음')
-with st.expander('📘 Excel Rev 관리',expanded=True):
-    if mode == '샘플 데이터':
-        st.info('샘플 데이터에는 Excel Rev 관리가 없습니다. 실제 Excel을 선택하면 표시됩니다.')
-    else:
-        revision=parse_revision(content)
-        if not revision['sheet']:
-            st.info('이 Excel에는 Rev 관리 시트가 없습니다.')
-        else:
-            st.subheader('Rev 관리 · Excel 원본')
-            st.text(revision['title'])
-            st.caption(f"라인: {revision['line'] or '미기재'} · 공정: {revision['process'] or '미기재'} · 출처: {revision['sheet']} 시트")
-            st.caption('아래는 Excel에 저장된 요약 값입니다. 사이드바 필터·앱 추가·수정 사항은 반영하지 않으므로 현재 대시보드 집계와 다를 수 있습니다. 수식은 재계산하지 않습니다.')
-            st.dataframe(revision['summary'],hide_index=True,use_container_width=True)
-            revisions=revision['history']
-            st.subheader('Excel Rev 변경 이력')
-            if revisions.empty:
-                st.info('등록된 Rev 이력이 없습니다.')
-            else:
-                latest=revisions.iloc[-1]
-                st.caption(f"원본 마지막 Rev: {latest['Rev No.']} · {latest['변경일자']} · 총 {len(revisions)}건")
-                st.dataframe(revisions,hide_index=True,use_container_width=True)
-                selected_rev=st.selectbox('Rev 상세 선택',list(reversed(revisions.index.tolist())),format_func=lambda i:f"Rev {revisions.loc[i,'Rev No.']} · {revisions.loc[i,'변경일자']}")
-                for rev_field in ['Rev No.','구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행']:
-                    st.text(f"{rev_field}: {revisions.loc[selected_rev,rev_field]}")
-                st.download_button('Excel Rev 이력 CSV 다운로드',safe_export(revisions).to_csv(index=False).encode('utf-8-sig'),'excel_rev_history.csv','text/csv')
-            st.caption('앱에서 수정한 항목의 이력은 항목 상세 및 화면 하단의 「전체 변경 이력」에서 확인할 수 있습니다.')
 scope=st.sidebar.radio('조회 범위',['주요 5개 분야','보조 시트','모든 시트'])
 base = df[df['분야'].isin(MAIN)] if scope=='주요 5개 분야' else df[~df['분야'].isin(MAIN)] if scope=='보조 시트' else df
 with st.sidebar:
