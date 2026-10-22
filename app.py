@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 PENDING 통합 관리'
-APP_VERSION='REV-05'
+APP_VERSION='HW-01'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -40,11 +40,27 @@ db_path = Path(__file__).parent/'data'/'pending.sqlite3'
 mode = st.sidebar.radio('데이터 선택',['실제 Excel','샘플 데이터'])
 st.title(APP_NAME)
 st.caption(f'화면 버전 {APP_VERSION}')
-page=st.radio('화면 선택',['Pending 현황','REV 관리'],horizontal=True,key='main_page')
+page=st.radio('화면 선택',['Pending 현황','REV 관리','설비 H/W 이력관리'],horizontal=True,key='main_page')
 with st.sidebar.expander('실행 정보 확인'):
     st.text(f'화면 버전: {APP_VERSION}')
     st.text(f'실행 파일: {Path(__file__).resolve()}')
 st.caption('CVD15I / CVD45I · 현황을 한눈에, 원문까지 정확하게')
+if page == '설비 H/W 이력관리':
+    from hw_ui import render_hw
+    data_dir=Path(__file__).parent/'data'
+    hw_context=None
+    if mode=='실제 Excel':
+        pending_content=upload.getvalue() if upload is not None else saved_default.read_bytes() if saved_default.exists() else local.read_bytes() if local.exists() else None
+        if pending_content:
+            try:
+                pending_source=source_key(pending_content)
+                pending_frame=apply_edits(db_path,pending_source,pd.concat([parse(pending_content),read_items(db_path,pending_source)],ignore_index=True))
+                hw_context={'source':pending_source,'frame':binary_status(pending_frame)}
+            except Exception as exc:
+                st.warning(f'Pending 연결용 파일을 읽지 못했습니다. H/W는 독립적으로 사용할 수 있습니다: {exc}')
+    render_hw(data_dir,hw_context)
+    st.stop()
+
 try:
     if mode == '샘플 데이터':
         st.warning('샘플 데이터 모드입니다. 아래 항목은 가상 예시이며 실제 설비 현황이 아닙니다.')
@@ -309,6 +325,18 @@ else:
     for detail_field in ['설비','분야','상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']:
         st.text(f"{detail_field}: {record[detail_field] or '미기재'}")
     if mode == '실제 Excel':
+        def open_hw_work():
+            st.session_state['main_page']='설비 H/W 이력관리'
+            st.session_state['hw_section']='작업 이력'
+            equipment_id='A4'+str(record['설비']) if record['설비'] in ['CVD15I','CVD45I'] else None
+            st.session_state['pending_hw_prefill']={'source':key,'id':record['ID'],'title':str(record['내용'])[:160],'equipmentId':equipment_id}
+            st.session_state.pop('hw_equipment',None)
+        st.button('관련 H/W 작업 등록',key='pending_to_hw',on_click=open_hw_work)
+        from hw_store import records as hw_records
+        related_work=[r for r in hw_records(Path(__file__).parent/'data'/'hw_history.sqlite3','workLogs') if r.get('pendingLink',{} ) and r['pendingLink'].get('source')==key and r['pendingLink'].get('id')==record['ID']]
+        if related_work:
+            with st.expander(f'관련 H/W 작업 이력 {len(related_work)}건'):
+                st.dataframe(pd.DataFrame([{'작업 ID':r['id'],'설비':r['equipmentId'],'챔버':r['chamberId'],'작업일':r['workDate'],'부품':r.get('targetPart',''),'내용':r.get('details','')} for r in related_work]),hide_index=True,use_container_width=True)
         with st.expander('✏️ 항목 수정 / 완료 처리'):
             st.caption('원본 내용은 보존하며 변경 사항만 별도로 저장합니다. 날짜는 원문을 유지하는 텍스트입니다. 새 날짜는 YYYY-MM-DD로 입력해주세요.')
             with st.form(f'edit_{selected}'):

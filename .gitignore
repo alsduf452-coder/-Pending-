@@ -7,3 +7,7 @@ data/*.xlsx
 
 data/*.sqlite3
 data/*.sqlite3-*
+
+.venv312/
+data/*.json
+data/*.zip

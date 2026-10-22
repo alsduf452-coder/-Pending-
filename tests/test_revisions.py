@@ -61,7 +61,7 @@ def test_revision_create_edit_audit_and_isolation(tmp_path):
 
 def test_revision_empty_and_ui_restart(tmp_path):
     root=Path(__file__).resolve().parents[1]
-    for name in ['app.py','pending_data.py','pending_store.py']:
+    for name in ['app.py','pending_data.py','pending_store.py','hw_store.py','hw_ui.py']:
         shutil.copyfile(root/name,tmp_path/name)
     (tmp_path/'data').mkdir()
     content=rev_workbook()

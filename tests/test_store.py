@@ -23,7 +23,7 @@ def test_registration_screen(tmp_path):
     import shutil
     from streamlit.testing.v1 import AppTest
     root=Path(__file__).resolve().parents[1]
-    for name in ['app.py','pending_data.py','pending_store.py']:
+    for name in ['app.py','pending_data.py','pending_store.py','hw_store.py','hw_ui.py']:
         shutil.copyfile(root/name,tmp_path/name)
     (tmp_path/'data').mkdir()
     (tmp_path/'data/source.xlsx').write_bytes(workbook())

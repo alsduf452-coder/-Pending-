@@ -18,8 +18,8 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
-    assert any('REV-05' in x.value for x in app.caption)
-    assert app.radio(key='main_page').options==['Pending 현황','REV 관리']
+    assert any('HW-01' in x.value for x in app.caption)
+    assert app.radio(key='main_page').options==['Pending 현황','REV 관리','설비 H/W 이력관리']
     app.radio(key='main_page').set_value('REV 관리').run()
     assert not app.exception
     assert any('REV 관리' in x.value for x in app.header)
