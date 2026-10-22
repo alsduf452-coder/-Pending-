@@ -137,7 +137,7 @@ def work_form(path,equipment,chambers,context,current=None):
             except Exception as exc:st.error(f'저장 실패: {exc}')
 
 
-def measurement_form(path,kind,equipment,chambers,logs,current=None):
+def measurement_form(path,kind,equipment,chambers,logs,current=None,default_type=None):
     current=current or {};spacing=kind=='spacingMeasurements';identifier=current.get('id','new');version=current.get('_version')
     with st.form(f'measure_{kind}_{identifier}_{version}'):
         ch=st.selectbox('측정 챔버',chambers,index=chambers.index(current['chamberId']) if current.get('chamberId') in chambers else 0,disabled=bool(current))
@@ -145,7 +145,7 @@ def measurement_form(path,kind,equipment,chambers,logs,current=None):
         timing_options=['초기 셋업','작업 전','작업 후','정기 점검']
         timing=st.selectbox('측정 시점',timing_options,index=timing_options.index(current.get('timing','작업 후')) if current.get('timing','작업 후') in timing_options else 0)
         title=st.text_input('작업 제목',value=current.get('workTitle',''))
-        part_type=st.selectbox('Flatness 종류',['Diffuser','Susceptor'],index=1 if current.get('type')=='Susceptor' else 0) if not spacing else None
+        part_type=st.selectbox('Flatness 종류',['Diffuser','Susceptor'],index=1 if (current.get('type') or default_type)=='Susceptor' else 0) if not spacing else None
         sn=st.text_input('측정 부품 S/N',value=current.get('partSnAtMeasurement',current.get('partSn','')))
         diffuser=st.text_input('Diffuser S/N',value=current.get('diffuserSn',''))
         susceptor=st.text_input('Susceptor S/N',value=current.get('susceptorSn',''))
@@ -170,6 +170,7 @@ def measurement_form(path,kind,equipment,chambers,logs,current=None):
                 if spacing:item.update(values=grid[0],partSnAtMeasurement=sn)
                 else:item.update(grid=grid,type=part_type,partSn=sn,rows=5,cols=7,maxMinSpan=store.flatness_span(grid))
                 store.save_record(path,kind,item,actor,version)
+                if not spacing:st.session_state[f'flatness_type_{equipment}']=part_type
                 st.session_state['hw_saved']='측정 기록을 저장했습니다.';st.rerun()
             except Exception as exc:st.error(f'저장 실패: {exc}')
 
@@ -183,13 +184,19 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
 .spacing-center {background:#e0f2fe;border:2px solid #0891b2}.measurement-svg {width:100%;height:auto;display:block;background:#f1f5f9;border:1px solid #94a3b8;border-radius:10px}
 .measure-legend {height:15px;border-radius:9px;border:1px solid #64748b;margin:10px 0}
 </style>""",unsafe_allow_html=True)
+    scoped=filter_rows(store.records(path,kind),equipment,chamber)
+    flatness_type=None if spacing else flatness_type_cards(equipment,scoped)
     query=st.text_input('측정 기록 검색',key=f'search_{kind}')
-    rows=filter_rows(store.records(path,kind),equipment,chamber,query)
+    rows=filter_rows(scoped,equipment,chamber,query)
+    if not spacing:rows=[row for row in rows if row['type']==flatness_type]
     with st.expander('＋ 새 측정 등록'):
-        measurement_form(path,kind,equipment,chambers,all_logs)
-    if not rows:st.info('해당 조건의 측정 기록이 없습니다.');return
+        measurement_form(path,kind,equipment,chambers,all_logs,default_type=flatness_type)
+    if not rows:
+        st.info(f"해당 조건의 {'Spacing' if spacing else flatness_type+' Flatness'} 측정 기록이 없습니다. 다른 카드·챔버·검색 조건을 확인해주세요.")
+        return
     indexed={r['id']:r for r in rows}
-    selected_key=f'measure_selected_{kind}_{equipment}'
+    suffix='' if spacing else f'_{flatness_type}'
+    selected_key=f'measure_selected_{kind}_{equipment}{suffix}'
     selected=st.session_state.get(selected_key)
     if selected not in indexed:
         selected=max(rows,key=lambda row:(row['measuredAt'],row.get('originalOrder') or 0,row['id']))['id']
@@ -198,42 +205,49 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     st.subheader(f"{r['chamberId']} · {'Spacing' if spacing else r['type']+' Flatness'} · {r['measuredAt']}")
     st.caption('아래 챔버별 측정 이력의 보기·수정 버튼으로 다른 기록을 열 수 있습니다.')
     st.write('측정기:',r.get('gaugeTool',''),' / 단위:',r.get('unit',''))
-    st.caption(f"S/N: {r.get('partSnAtMeasurement',r.get('partSn',''))} · {r.get('timing','')} · {r.get('notes','')}")
+    st.caption(f"S/N: {r.get('partSnAtMeasurement',r.get('partSn',''))}")
+    st.caption('측정 구분: '+str(r.get('timing') or '미기재'))
+    if r.get('notes'):st.caption('비고: '+r['notes'])
     if r.get('isAmbiguous'):st.warning(r.get('ambiguityReason') or '원본에서 검토 대상으로 표시된 측정입니다. 값을 자동 보정하지 않았습니다.')
     source=r.get('source',{})
     if source:st.caption(f"원문 출처: {source.get('fileName','')} / {source.get('sheetName','')} / {source.get('cellRange','')}")
+    mode_key=f"measurement_mode_{kind}_{equipment}_{r['chamberId']}_{flatness_type or 'Spacing'}"
+    view_mode=st.radio('측정 보기 방식',['단일 상세','작업 전후 비교'],horizontal=True,key=mode_key)
+    if view_mode=='작업 전후 비교':
+        comparison_view(rows,r,kind,equipment)
+        measurement_history(rows,kind,equipment)
+        measurement_export(rows,kind,spacing)
+        return
+    titles=st.columns(2,gap='large')
+    titles[0].subheader('Spacing 실측 데이터' if spacing else f'{flatness_type} Flatness 실측 데이터')
+    titles[1].subheader('Spacing 측정 위치도' if spacing else f'{flatness_type} Flatness 측정 위치도')
+    orientation='▲ G/V 측: ①⑥② / 중앙: ⑨⑤⑦ / ▼ Window 측: ④⑧③' if spacing else '5행 × 7열 · Col 1: Gate Valve 측 / Col 7: Window 측'
+    for col in titles:col.caption(orientation)
     left,right=st.columns(2,gap='large')
+    left_panel=left.empty();right_panel=right.empty()
     editor_key=f"preview_{kind}_{r['id']}_{r['_version']}"
     original_grid=[[r['values'][p-1] for p in positions] for positions in store.POINT_LAYOUT] if spacing else r['grid']
-    with left:
-        st.subheader('Spacing 실측 데이터 · 왼쪽 50%' if spacing else 'Flatness 실측 데이터 · 왼쪽 50%')
-        st.caption('▲ G/V 측: ①⑥② / 중앙: ⑨⑤⑦ / ▼ Window 측: ④⑧③' if spacing else '5행 × 7열 · Col 1: Gate Valve 측 / Col 7: Window 측')
+    with st.expander('수치 직접 편집 · 변경값은 위 위치도에 즉시 미리보기',expanded=st.session_state.get('measurement_edit_requested')==r['id']):
         data=pd.DataFrame(original_grid,columns=['좌','중앙','우'] if spacing else [f'Col {i}' for i in range(1,8)],index=['G/V 측','중앙','Window 측'] if spacing else [f'Row {i}' for i in range(1,6)]).astype(float)
-        if spacing:
-            with st.expander('수치 직접 편집',expanded=st.session_state.get('measurement_edit_requested')==r['id']):
-                edited=st.data_editor(data,num_rows='fixed',hide_index=True,use_container_width=True,key=editor_key)
-        else:
-            edited=st.data_editor(data,num_rows='fixed',use_container_width=True,key=editor_key)
-        draft_grid=[[None if pd.isna(v) else float(v) for v in row] for row in edited.to_numpy().tolist()]
-        if spacing:
-            draft_values=[None]*9
-            for ri,positions in enumerate(store.POINT_LAYOUT):
-                for ci,point in enumerate(positions):draft_values[point-1]=draft_grid[ri][ci]
-            st.markdown(spacing_table_html(draft_values),unsafe_allow_html=True)
-        stats=measurement_stats(draft_grid)
-        table([{'최소값(mils)':stats['최소값'],'최댓값(mils)':stats['최댓값'],'Max−Min(mils)':stats['Max−Min'],'측정 개수':f"{stats['측정 수']}/{9 if spacing else 35}"}])
-        st.caption('빈칸은 미측정이며 0은 실제 측정값입니다. 표 편집은 오른쪽에 즉시 미리보기되며 저장 전에는 DB를 변경하지 않습니다.')
-        if spacing:st.caption('885 mils는 AI Studio 원본의 시각 비교 기준입니다. 규격이나 양불 판정 기준이 아닙니다.')
-        def reset_preview():st.session_state.pop(editor_key,None)
-        st.button('입력 되돌리기 · 저장된 값',key=f'reset_{editor_key}',on_click=reset_preview)
-    with right:
-        st.subheader('Spacing 측정 위치도 · 오른쪽 50%' if spacing else 'Flatness 측정 위치도 · 오른쪽 50%')
-        st.markdown(spacing_diagram_svg(draft_values) if spacing else flatness_diagram_svg(draft_grid),unsafe_allow_html=True)
-        if not spacing:
-            legend='#64748b' if stats['최소값']==stats['최댓값'] else 'linear-gradient(90deg,#2563eb,#ef4444)'
-            st.markdown(f'<div class="measure-legend" style="background:{legend}"></div>',unsafe_allow_html=True)
-            st.caption(f"낮은 값 · 파랑: {measurement_number(stats['최소값'])} mils ↔ 높은 값 · 빨강: {measurement_number(stats['최댓값'])} mils · 회색/—: 미측정")
-            if stats['최소값'] is not None and stats['최소값']==stats['최댓값']:st.caption('모든 실측값이 같아 도면은 중립 회색으로 표시합니다.')
+        edited=st.data_editor(data,num_rows='fixed',use_container_width=True,key=editor_key)
+    draft_grid=[[None if pd.isna(v) else float(v) for v in row] for row in edited.to_numpy().tolist()]
+    if spacing:
+        draft_values=[None]*9
+        for ri,positions in enumerate(store.POINT_LAYOUT):
+            for ci,point in enumerate(positions):draft_values[point-1]=draft_grid[ri][ci]
+    left_panel.markdown(spacing_diagram_svg(draft_values,table_mode=True) if spacing else flatness_diagram_svg(draft_grid,table_mode=True),unsafe_allow_html=True)
+    right_panel.markdown(spacing_diagram_svg(draft_values) if spacing else flatness_diagram_svg(draft_grid),unsafe_allow_html=True)
+    stats=measurement_stats(draft_grid)
+    if not spacing:
+        legend='#64748b' if stats['최소값']==stats['최댓값'] else 'linear-gradient(90deg,#2563eb,#ef4444)'
+        st.markdown(f'<div class="measure-legend" style="background:{legend}"></div>',unsafe_allow_html=True)
+        st.caption(f"낮은 값 · 파랑: {measurement_number(stats['최소값'])} mils ↔ 높은 값 · 빨강: {measurement_number(stats['최댓값'])} mils · 회색/—: 미측정")
+        if stats['최소값'] is not None and stats['최소값']==stats['최댓값']:st.caption('모든 실측값이 같아 도면은 중립 회색으로 표시합니다.')
+    table([{'최소값(mils)':stats['최소값'],'최댓값(mils)':stats['최댓값'],'Max−Min(mils)':stats['Max−Min'],'측정 개수':f"{stats['측정 수']}/{9 if spacing else 35}"}])
+    st.caption('숫자표와 위치도는 같은 좌표·높이 기준으로 정렬됩니다. 빈칸은 미측정, 0은 실측값입니다. 편집 후 저장해야 DB가 변경됩니다.')
+    if spacing:st.caption('885 mils는 AI Studio 원본의 시각 비교 기준입니다. 규격이나 양불 판정 기준이 아닙니다.')
+    def reset_preview():st.session_state.pop(editor_key,None)
+    st.button('입력 되돌리기 · 저장된 값',key=f'reset_{editor_key}',on_click=reset_preview)
     if draft_grid!=original_grid:st.info('미저장 측정값이 있습니다. 아래에서 변경자를 입력하고 저장해주세요.')
     with st.form(f'preview_save_{kind}_{r["id"]}_{r["_version"]}'):
         actor=st.text_input('수치 변경자 *')
@@ -257,8 +271,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     with st.expander('측정 정보 · 날짜/SN/비고 수정',expanded=st.session_state.get('measurement_edit_requested')==r['id']):
         measurement_form(path,kind,equipment,chambers,all_logs,r)
     with st.expander('선택 측정의 필드별 수정 기록 · 상세 로그'):show_audit(path,r['id'])
-    export=pd.DataFrame([{'ID':row['id'],'설비':row['equipmentId'],'챔버':row['chamberId'],'측정일':row['measuredAt'],'종류':'Spacing' if spacing else row['type'],'측정값':json.dumps(row['values'] if spacing else row['grid']),'비고':row.get('notes','')} for row in rows])
-    export_buttons(export,'hw_measure_'+kind)
+    measurement_export(rows,kind,spacing)
 
 
 def export_buttons(df,name):
@@ -562,7 +575,7 @@ def spacing_table_html(values):
     return '<div class="spacing-values">'+''.join(cells)+'</div>'
 
 
-def spacing_diagram_svg(values):
+def spacing_diagram_svg(values,table_mode=False):
     from html import escape
     svg=['<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Spacing 9포인트 위치도" viewBox="0 0 700 510" class="measurement-svg">',
          '<rect x="35" y="40" width="630" height="420" rx="24" fill="#e5ecf5" stroke="#64748b" stroke-width="3"/>',
@@ -570,6 +583,8 @@ def spacing_diagram_svg(values):
          '<path d="M350 68V432M64 250H636" stroke="#94a3b8" stroke-dasharray="4 5"/>',
          '<text x="350" y="24" text-anchor="middle" fill="#075985" font-size="18" font-weight="700">▲ GATE VALVE · G/V 측</text>',
          '<text x="350" y="490" text-anchor="middle" fill="#92400e" font-size="18" font-weight="700">▼ WINDOW 측</text>']
+    if table_mode:
+        svg=svg[:1]+['<rect x="62" y="67" width="576" height="366" rx="12" fill="#f1f5f9" stroke="#94a3b8"/>','<text x="350" y="24" text-anchor="middle" fill="#075985" font-size="18" font-weight="700">▲ GATE VALVE · G/V 측</text>','<text x="350" y="490" text-anchor="middle" fill="#92400e" font-size="18" font-weight="700">▼ WINDOW 측</text>']
     for y,row in enumerate(store.POINT_LAYOUT):
         for x,point in enumerate(row):
             left=82+x*185;top=90+y*112;v=values[point-1]
@@ -583,9 +598,10 @@ def spacing_diagram_svg(values):
     return ''.join(svg)+'</svg>'
 
 
-def flatness_diagram_svg(grid):
+def flatness_diagram_svg(grid,color_range=None,table_mode=False):
     from html import escape
     vals=[v for row in grid for v in row if v is not None];low=min(vals) if vals else None;high=max(vals) if vals else None
+    if color_range is not None:low,high=color_range
     out=['<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Flatness 35포인트 위치도" viewBox="0 0 700 490" class="measurement-svg">',
          '<defs><linearGradient id="flatshade" x1="0" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".20"/><stop offset=".45" stop-color="#ffffff" stop-opacity="0"/><stop offset="1" stop-color="#172b4d" stop-opacity=".20"/></linearGradient></defs>',
          '<rect x="35" y="45" width="630" height="395" rx="22" fill="#d9e2ef" stroke="#475569" stroke-width="3"/>',
@@ -595,15 +611,15 @@ def flatness_diagram_svg(grid):
     for ri,row in enumerate(grid):
         for ci,v in enumerate(row):
             x=68+ci*80;y=82+ri*64
-            color=flatness_color(v,low,high)
+            color=('#ffffff' if v is not None else '#e2e8f0') if table_mode else flatness_color(v,low,high)
             out.append(f'<rect x="{x}" y="{y}" width="80" height="64" fill="{color}" stroke="#cbd5e1" stroke-width="1"/>')
-            out.append(f'<rect x="{x}" y="{y}" width="80" height="64" fill="url(#flatshade)"/>')
+            if not table_mode:out.append(f'<rect x="{x}" y="{y}" width="80" height="64" fill="url(#flatshade)"/>')
             if v is None:
                 out.append(f'<path d="M{x+8} {y+54}L{x+68} {y+9}" stroke="#94a3b8" stroke-width="1.3"/>')
-            out.append(f'<text x="{x+5}" y="{y+13}" font-size="9" fill="{"#475569" if v is None else "#ffffff"}">R{ri+1}C{ci+1}</text>')
+            out.append(f'<text x="{x+5}" y="{y+13}" font-size="9" fill="{"#475569" if v is None or table_mode else "#ffffff"}">R{ri+1}C{ci+1}</text>')
             label='—' if v is None else measurement_number(v)
-            out.append(f'<text x="{x+40}" y="{y+40}" text-anchor="middle" font-size="{15 if len(label)>5 else 20}" font-weight="700" fill="{"#475569" if v is None else "#ffffff"}" style="paint-order:stroke;stroke:{"transparent" if v is None else "#334155"};stroke-width:.8px">{escape(label)}</text>')
-    out.append('<text x="350" y="470" text-anchor="middle" font-size="15" fill="#334155">실측값 mils · 회색/—는 미측정 · 음영은 입체 표현</text>')
+            out.append(f'<text x="{x+40}" y="{y+40}" text-anchor="middle" font-size="{15 if len(label)>5 else 20}" font-weight="700" fill="{"#475569" if v is None or table_mode else "#ffffff"}" style="paint-order:stroke;stroke:{"transparent" if v is None or table_mode else "#334155"};stroke-width:.8px">{escape(label)}</text>')
+    out.append('<text x="350" y="470" text-anchor="middle" font-size="15" fill="#334155">실측값 mils · 회색/—는 미측정'+('' if table_mode else ' · 음영은 입체 표현')+'</text>')
     return ''.join(out)+'</svg>'
 
 
@@ -612,8 +628,10 @@ def measurement_stats(grid):
     return {'최소값':min(values) if values else None,'최댓값':max(values) if values else None,'Max−Min':store.flatness_span(grid),'측정 수':len(values)}
 
 
-def select_measurement(kind,equipment,identifier,edit=False):
-    st.session_state[f'measure_selected_{kind}_{equipment}']=identifier
+def select_measurement(kind,equipment,identifier,edit=False,part_type=None):
+    suffix=f'_{part_type}' if part_type else ''
+    st.session_state[f'measure_selected_{kind}_{equipment}{suffix}']=identifier
+    if part_type:st.session_state[f'flatness_type_{equipment}']=part_type
     st.session_state['measurement_edit_requested']=identifier if edit else None
 
 
@@ -634,5 +652,94 @@ def measurement_history(rows,kind,equipment):
                 cells=st.columns(widths)
                 values=[n,r['measuredAt'],r.get('timing',''),r.get('partSnAtMeasurement',r.get('partSn','')),r.get('gaugeTool',''),measurement_number(store.flatness_span(grid))+' mils',r.get('notes','')]
                 for cell,value in zip(cells,values):cell.caption(str(value or '—'))
-                cells[7].button('보기',key=f'measure_view_{kind}_{r["id"]}',on_click=select_measurement,args=(kind,equipment,r['id']))
-                cells[8].button('수정',key=f'measure_edit_{kind}_{r["id"]}',on_click=select_measurement,args=(kind,equipment,r['id'],True))
+                cells[7].button('보기',key=f'measure_view_{kind}_{r["id"]}',on_click=select_measurement,args=(kind,equipment,r['id'],False,r.get('type')))
+                cells[8].button('수정',key=f'measure_edit_{kind}_{r["id"]}',on_click=select_measurement,args=(kind,equipment,r['id'],True,r.get('type')))
+
+
+def select_flatness_type(equipment,part):
+    st.session_state[f'flatness_type_{equipment}']=part
+    st.session_state.pop('measurement_edit_requested',None)
+
+
+def flatness_type_cards(equipment,rows):
+    key=f'flatness_type_{equipment}'
+    selected=st.session_state.get(key,'Diffuser')
+    if selected not in ['Diffuser','Susceptor']:selected='Diffuser'
+    for col,part in zip(st.columns(2),['Diffuser','Susceptor']):
+        with col:
+            with st.container(border=True):
+                count=sum(r.get('type')==part for r in rows)
+                st.subheader(f'{part} Flatness')
+                st.caption(f'현재 설비·챔버 범위의 측정 {count}건')
+                st.button(f'{part} 데이터 보기',key=f'flatness_card_{equipment}_{part}',type='primary' if selected==part else 'secondary',on_click=select_flatness_type,args=(equipment,part),use_container_width=True)
+    return selected
+
+
+def comparison_view(rows,current,kind,equipment):
+    spacing=kind=='spacingMeasurements'
+    candidates=sorted([row for row in rows if row['chamberId']==current['chamberId'] and (spacing or row['type']==current['type'])],key=lambda row:(row['measuredAt'],row.get('originalOrder') or 0,row['id']))
+    if len(candidates)<2:
+        st.info('같은 설비·챔버·측정 종류에 기록이 2건 이상 있어야 전후 비교할 수 있습니다.');return
+    indexed={row['id']:row for row in candidates};options=list(indexed)
+    index=options.index(current['id']);after_index=max(1,index)
+    context=f"{kind}_{equipment}_{current['chamberId']}_{current.get('type','Spacing')}_{current['id']}"
+    def label(identifier):
+        item=indexed[identifier]
+        return f"{item['measuredAt']} · {item.get('timing','')} · {item.get('partSnAtMeasurement',item.get('partSn',''))} · {identifier}"
+    left,right=st.columns(2)
+    before_id=left.selectbox('비교 기준 A · 보통 작업 전',options,index=after_index-1,format_func=label,key='compare_A_'+context)
+    after_id=right.selectbox('비교 대상 B · 보통 작업 후',options,index=after_index,format_func=label,key='compare_B_'+context)
+    if before_id==after_id:st.info('전후 비교에는 서로 다른 두 기록을 선택해주세요.');return
+    before=indexed[before_id];after=indexed[after_id]
+    result=store.compare_measurements(before,after,kind)
+    if before['measuredAt']>after['measuredAt']:st.warning('A 날짜가 B보다 늦습니다. 변화량은 선택한 순서대로 B−A로 계산합니다.')
+    st.caption('전후 비교는 저장된 측정 기록 기준이며, 저장하지 않은 편집값은 포함하지 않습니다.')
+    st.caption(f"비교 범위: {equipment} / {current['chamberId']} / {'Spacing' if spacing else current['type']} · 변화량 = B − A · 비교 가능 위치 {result['comparable']}/{9 if spacing else 35}")
+    domain=(result['minimum'],result['maximum'])
+    for col,item,caption in [(left,before,'A · 비교 기준'),(right,after,'B · 비교 대상')]:
+        with col:
+            st.subheader(caption)
+            st.caption(f"{item['measuredAt']} · {item.get('timing','')} · {item.get('partSnAtMeasurement',item.get('partSn',''))}")
+            grid=[item['values']] if spacing else item['grid']
+            if spacing:
+                st.markdown(spacing_diagram_svg(item['values']),unsafe_allow_html=True)
+                value_table=pd.DataFrame([[item['values'][p-1] for p in row] for row in store.POINT_LAYOUT],columns=['좌','중앙','우'],index=['G/V','중앙','Window'])
+            else:
+                st.markdown(flatness_diagram_svg(item['grid'],color_range=domain),unsafe_allow_html=True)
+                value_table=pd.DataFrame(item['grid'],columns=[f'C{i}' for i in range(1,8)],index=[f'R{i}' for i in range(1,6)])
+            st.dataframe(value_table,use_container_width=True)
+            stats=measurement_stats(grid)
+            st.caption(f"최소 {measurement_number(stats['최소값'])} / 최대 {measurement_number(stats['최댓값'])} / Max−Min {measurement_number(stats['Max−Min'])} mils · 측정 {stats['측정 수']}개")
+    if not spacing:
+        legend='#64748b' if domain[0]==domain[1] else 'linear-gradient(90deg,#2563eb,#ef4444)'
+        st.markdown(f'<div class="measure-legend" style="background:{legend}"></div>',unsafe_allow_html=True)
+        st.caption(f'공통 색상 범위: 낮은 값 파랑 {measurement_number(domain[0])} → 높은 값 빨강 {measurement_number(domain[1])} mils · A/B에 같은 색상 기준 적용')
+        if domain[0] is not None:
+            with st.expander('전후 3D 비교 · 공통 색상 및 Z축 범위'):
+                low,high=domain
+                if low==high:low-=1;high+=1
+                for col,item in zip(st.columns(2),[before,after]):
+                    with col:
+                        colors=[[0,'#64748b'],[1,'#64748b']] if domain[0]==domain[1] else [[0,MEASURE_BLUE],[1,MEASURE_RED]]
+                        fig=go.Figure(go.Surface(z=item['grid'],x=list(range(1,8)),y=list(range(1,6)),colorscale=colors,cmin=low,cmax=high,connectgaps=False,lighting={'ambient':.65,'diffuse':.75,'specular':.18,'roughness':.85},colorbar={'title':'mils'}))
+                        fig.update_layout(height=380,title=item['measuredAt'],scene={'xaxis_title':'Col','yaxis_title':'Row','zaxis':{'title':'mils','range':[low,high]}})
+                        st.plotly_chart(fig,use_container_width=True)
+    st.subheader('위치별 변화량 · B − A')
+    difference=result['difference']
+    if spacing:
+        delta_values=difference[0]
+        delta_grid=[[delta_values[p-1] for p in row] for row in store.POINT_LAYOUT]
+        st.dataframe(pd.DataFrame(delta_grid,columns=['좌','중앙','우'],index=['G/V','중앙','Window']),use_container_width=True)
+        st.subheader('Spacing 차이 항목 전후 비교')
+        st.dataframe(pd.DataFrame(result['spacing_deltas']),hide_index=True,use_container_width=True)
+        exports=[{'위치':f'P{i+1}','A 기록':before_id,'B 기록':after_id,'A(mils)':before['values'][i],'B(mils)':after['values'][i],'B−A(mils)':delta_values[i]} for i in range(9)]
+    else:
+        st.dataframe(pd.DataFrame(difference,columns=[f'C{i}' for i in range(1,8)],index=[f'R{i}' for i in range(1,6)]),use_container_width=True)
+        exports=[{'위치':f'R{ri+1}C{ci+1}','A 기록':before_id,'B 기록':after_id,'A(mils)':before['grid'][ri][ci],'B(mils)':after['grid'][ri][ci],'B−A(mils)':difference[ri][ci]} for ri in range(5) for ci in range(7)]
+    st.caption('양쪽 모두 실측값이 있는 위치만 차이를 계산합니다. 0은 유효값이며, 한쪽이 미측정이면 변화량도 빈값입니다. 비교는 저장된 기록을 읽기만 합니다.')
+    export_buttons(pd.DataFrame(exports),'hw_compare_'+kind)
+
+
+def measurement_export(rows,kind,spacing):
+    export=pd.DataFrame([{'ID':row['id'],'설비':row['equipmentId'],'챔버':row['chamberId'],'측정일':row['measuredAt'],'종류':'Spacing' if spacing else row['type'],'측정값':json.dumps(row['values'] if spacing else row['grid']),'비고':row.get('notes','')} for row in rows])
+    export_buttons(export,'hw_measure_'+kind)

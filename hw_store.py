@@ -347,3 +347,20 @@ def archive_work(path,identifier,actor,reason,expected_version,restore=False):
             conn.execute("UPDATE entities SET payload=?,version=version+1 WHERE kind='workLogs' AND id=?",(value,identifier))
             conn.execute('INSERT INTO audit VALUES (?,?,?,?,?,?,?,?)',(uuid4().hex,now(),actor,'RESTORE' if restore else 'ARCHIVE','workLogs',identifier,old['payload'],value))
     finally:conn.close()
+
+
+def compare_measurements(before,after,kind):
+    if kind not in ['spacingMeasurements','flatnessMeasurements']:raise ValueError('측정 종류가 올바르지 않습니다.')
+    if any(before.get(key)!=after.get(key) for key in ['equipmentId','chamberId']):raise ValueError('같은 설비·챔버의 측정만 비교할 수 있습니다.')
+    spacing=kind=='spacingMeasurements'
+    if not spacing and before.get('type')!=after.get('type'):raise ValueError('Diffuser와 Susceptor는 서로 비교하지 않습니다.')
+    a=[before['values']] if spacing else before['grid'];b=[after['values']] if spacing else after['grid']
+    shape=(1,9) if spacing else (5,7)
+    if not numeric_grid(a,*shape) or not numeric_grid(b,*shape):raise ValueError('측정 배열 크기 또는 숫자가 잘못됐습니다.')
+    diff=[[round(y-x,6) if x is not None and y is not None else None for x,y in zip(ra,rb)] for ra,rb in zip(a,b)]
+    all_values=[v for grid in [a,b] for row in grid for v in row if v is not None]
+    result={'before':a,'after':b,'difference':diff,'minimum':min(all_values) if all_values else None,'maximum':max(all_values) if all_values else None,'comparable':sum(v is not None for row in diff for v in row)}
+    if spacing:
+        da=spacing_deltas(before['values']);db=spacing_deltas(after['values'])
+        result['spacing_deltas']=[{'차이 항목':key,'A(mils)':da[key],'B(mils)':db[key],'변화 B−A(mils)':round(db[key]-da[key],6) if da[key] is not None and db[key] is not None else None} for key in da]
+    return result

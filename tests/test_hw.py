@@ -236,7 +236,8 @@ def test_measurement_split_ui_and_chamber_history(tmp_path):
     app.radio(key='hw_section').set_value('Spacing').run()
     assert not app.exception
     headers=[x.value for x in app.subheader]
-    assert any('왼쪽 50%' in x for x in headers) and any('오른쪽 50%' in x for x in headers)
+    assert any('실측 데이터' in x for x in headers) and any('측정 위치도' in x for x in headers)
+    assert not any('50%' in x for x in headers)
     histories=[x for x in headers if '측정 이력 ·' in x]
     assert histories and all('Chamber B' in x for x in histories)
     assert not any(x.label=='측정 기록 선택' for x in app.selectbox)
@@ -255,3 +256,65 @@ def test_measurement_split_ui_and_chamber_history(tmp_path):
     assert not app.exception
     assert hw.records(db,'flatnessMeasurements')[0]['grid'][0][0]==-10
     assert hw.records(db,'flatnessMeasurements')[0]['grid'][0][1] is None
+
+
+def test_measurement_comparison_values_and_scope():
+    data=fixture();before=data['spacingMeasurements'][0]
+    after={**before,'id':'SP2','values':[1,0,5,3,2,8,6,7,None]}
+    result=hw.compare_measurements(before,after,'spacingMeasurements')
+    assert result['difference'][0][:3]==[1,None,3]
+    assert result['difference'][0][-1] is None
+    assert result['spacing_deltas'][0]['변화 B−A(mils)']==-3
+    assert result['comparable']==7
+    with pytest.raises(ValueError):hw.compare_measurements(before,{**after,'chamberId':'Chamber B'},'spacingMeasurements')
+    flat=data['flatnessMeasurements'][0]
+    another={**flat,'id':'FL2','grid':[[10,None,-5,3,4,5,6]]*5}
+    comparison=hw.compare_measurements(flat,another,'flatnessMeasurements')
+    assert comparison['minimum']==-5 and comparison['maximum']==10
+    assert comparison['difference'][0][:3]==[10,None,-7]
+    with pytest.raises(ValueError):hw.compare_measurements(flat,{**another,'type':'Susceptor'},'flatnessMeasurements')
+    assert flat['grid'][0][0]==0
+    from hw_ui import flatness_diagram_svg
+    # A common domain must yield the same colour for an equal number in different records.
+    a=flatness_diagram_svg(flat['grid'],color_range=(-5,10))
+    b=flatness_diagram_svg(another['grid'],color_range=(-5,10))
+    assert 'flatshade' in a+b
+
+
+def test_flatness_type_cards_and_comparison_ui(tmp_path):
+    db=setup_ui(tmp_path);data=fixture()
+    data['flatnessMeasurements'].append({**data['flatnessMeasurements'][0],'id':'FL2','measuredAt':'2025-03-01','grid':[[10,None,-5,3,4,5,6]]*5})
+    data['flatnessMeasurements'].append({**data['flatnessMeasurements'][0],'id':'SUS1','type':'Susceptor','partSn':'SUS-SN','measuredAt':'2025-02-01'})
+    data['flatnessMeasurements'].append({**data['flatnessMeasurements'][0],'id':'SUS2','type':'Susceptor','partSn':'SUS-SN','measuredAt':'2025-03-01'})
+    data['spacingMeasurements'].append({**data['spacingMeasurements'][0],'id':'SP2','measuredAt':'2025-03-01'})
+    hw.import_backup(db,encoded(data),'등록자')
+    versions_before={kind:[(r['id'],r['_version']) for r in hw.records(db,kind)] for kind in hw.KINDS}
+    app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
+    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
+    app.radio(key='hw_section').set_value('Flatness').run()
+    assert not app.exception
+    assert any(x.label=='Diffuser 데이터 보기' for x in app.button)
+    assert any(x.label=='Susceptor 데이터 보기' for x in app.button)
+    app.button(key='flatness_card_A4CVD15I_Susceptor').click().run()
+    assert not app.exception
+    assert any('Susceptor Flatness 실측 데이터' in x.value for x in app.subheader)
+    histories=[x.value for x in app.subheader if '측정 이력 ·' in x.value]
+    assert histories and all('Susceptor' in x for x in histories)
+    assert not any('50%' in x.value for x in app.subheader)
+    assert any(x.value.startswith('측정 구분:') for x in app.caption)
+    mode=next(x for x in app.radio if x.label=='측정 보기 방식')
+    mode.set_value('작업 전후 비교').run()
+    assert not app.exception
+    options=next(x for x in app.selectbox if x.label=='비교 기준 A · 보통 작업 전').options
+    assert all('SUS' in x for x in options) and not any('FL2' in x for x in options)
+    assert any('공통 색상 범위' in x.value for x in app.caption)
+    app.button(key='flatness_card_A4CVD15I_Diffuser').click().run()
+    assert not app.exception
+    next(x for x in app.radio if x.label=='측정 보기 방식').set_value('작업 전후 비교').run()
+    assert not app.exception
+    app.radio(key='hw_section').set_value('Spacing').run()
+    next(x for x in app.radio if x.label=='측정 보기 방식').set_value('작업 전후 비교').run()
+    assert not app.exception
+    assert any(x.value=='Spacing 차이 항목 전후 비교' for x in app.subheader)
+    versions_after={kind:[(r['id'],r['_version']) for r in hw.records(db,kind)] for kind in hw.KINDS}
+    assert versions_before==versions_after
