@@ -18,7 +18,7 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
-    assert any('HW-09' in x.value for x in app.caption)
+    assert any('HW-10' in x.value for x in app.caption)
     assert app.sidebar.radio(key='main_page').value=='Pending 현황'
     assert app.radio(key='main_page').options==['Pending 현황','REV 관리','설비 H/W 이력관리']
     app.radio(key='main_page').set_value('REV 관리').run()
@@ -29,6 +29,10 @@ def test_title_and_visible_rev_navigation():
     if (Path(__file__).resolve().parents[1]/'data/default.xlsx').exists():
         assert any('18건' in x.value for x in app.success)
         assert any('rev-history-table' in x.value and '주요 변경내용' in x.value for x in app.markdown)
+        history=next(x.value for x in app.markdown if '<table class="rev-history-table">' in x.value)
+        assert '<th>출처</th>' not in history
+        assert history.count('<th>')==6
+        assert 'border:1px solid #64748b' in history
         app.text_input(key='rev_search').set_value('NoSuchRev123456').run()
         assert any('검색 조건' in x.value for x in app.info)
     app.radio(key='main_page').set_value('Pending 현황').run()

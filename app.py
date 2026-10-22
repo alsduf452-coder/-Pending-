@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 PENDING 통합 관리'
-APP_VERSION='HW-09'
+APP_VERSION='HW-10'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -172,14 +172,20 @@ if page == 'REV 관리':
         st.info('검색 조건에 맞는 REV 이력이 없습니다.')
     else:
         # escape=True로 Excel의 HTML을 실행하지 않고, 줄바꿈이 보이는 전체 표를 제공합니다.
-        table=revision_table_html(filtered)
+        table=revision_table_html(filtered.drop(columns=['출처'],errors='ignore'))
         st.markdown("""<style>
-        .rev-history-scroll {overflow:auto;max-height:700px;border:1px solid #dbe3ef;border-radius:10px;background:white}
-        .rev-history-table {width:100%;border-collapse:collapse;font-size:14px;min-width:950px}
-        .rev-history-table th {background:#e7eef9;padding:12px;text-align:left;position:sticky;top:0;z-index:1}
-        .rev-history-table td {padding:12px;vertical-align:top;white-space:pre-wrap;border:1px solid #e3e9f2;overflow-wrap:anywhere}
-        .rev-history-table td:nth-child(3) {min-width:380px;width:46%}
-        .rev-history-table tr:nth-child(even) {background:#f7f9fc}
+        .rev-history-scroll {overflow:auto;max-height:700px;border:1px solid #64748b;border-radius:8px;background:#f1f5f9}
+        .rev-history-table {width:100%;border-collapse:collapse;table-layout:fixed;font-size:14px;min-width:1050px;color:#172b4d}
+        .rev-history-table th {background:#cbd5e1;padding:10px 8px;text-align:left;position:sticky;top:0;z-index:1;border:1px solid #64748b;box-shadow:inset 0 -1px #64748b}
+        .rev-history-table td {padding:10px 8px;vertical-align:top;white-space:pre-wrap;border:1px solid #64748b;overflow-wrap:anywhere;line-height:1.5;background:#f8fafc}
+        .rev-history-table th:nth-child(1) {width:6%}
+        .rev-history-table th:nth-child(2) {width:10%}
+        .rev-history-table th:nth-child(3) {width:46%}
+        .rev-history-table th:nth-child(4) {width:10%}
+        .rev-history-table th:nth-child(5) {width:11%}
+        .rev-history-table th:nth-child(6) {width:17%}
+        .rev-history-table td:nth-child(4) {overflow-wrap:normal}
+        .rev-history-table tr:nth-child(even) td {background:#e8eef5}
         </style>"""+'<div class="rev-history-scroll">'+table+'</div>',unsafe_allow_html=True)
         st.caption('표 안에서 스크롤하면 전체 이력을 볼 수 있습니다. 변경내용은 줄바꿈을 유지합니다.')
         selected_rev=st.selectbox('REV 상세 선택',list(reversed(filtered.index.tolist())),format_func=lambda i:f"REV {filtered.loc[i,'Rev No.']} · {filtered.loc[i,'변경일자']}")
