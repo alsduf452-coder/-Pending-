@@ -118,3 +118,45 @@ def load_revision(content):
         return {'sheet':sheet.title,'title':clean(val(2,4)),'line':clean(val(2,13)),'process':clean(val(3,13)), 'summary':pd.DataFrame(totals,columns=summary_columns),'history':pd.DataFrame(history,columns=history_columns)}
     finally:
         wb.close()
+
+
+def revision_display(revisions):
+    """조회용 정리. 원본/DB를 수정하지 않고 전후 내역을 반환합니다."""
+    result=revisions.copy(deep=True)
+    changes=[]
+    for idx,row in revisions.iterrows():
+        for field in ['구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고']:
+            before=clean(row[field]);after=before;reason=[]
+            if field=='변경일자':
+                parts=[p.strip() for p in re.split(r'(?:\r?\n|\\n|/n|\s+/\s+)+',before) if p.strip()]
+                unique=[];seen=set()
+                for part in parts:
+                    token=part
+                    match=re.fullmatch(r'(\d{4})[-.](\d{1,2})[-.](\d{1,2})',part)
+                    if match: token=tuple(int(x) for x in match.groups())
+                    if token not in seen:
+                        unique.append(part);seen.add(token)
+                if len(unique)<len(parts):
+                    after=' / '.join(unique);reason.append('동일 변경일자 중복 제거')
+                elif len(parts)>1: after=' / '.join(parts)
+            if field=='작성자' and ('\n' in after or '\r' in after):
+                after=' / '.join(part.strip() for part in after.splitlines() if part.strip())
+                reason.append('작성자 줄바꿈을 / 구분으로 표시')
+            if '/n' in after or '\\n' in after:
+                after=after.replace('/n','/').replace('\\n','\\')
+                reason.append('문자열 줄바꿈 표기의 n만 제거, 슬래시 보존')
+            if after!=before:
+                result.at[idx,field]=after
+                changes.append({'REV':clean(row['Rev No.']),'원본 행':row.get('원본 행',''),'필드':field,'정리 전':before,'정리 후':after,'사유':' / '.join(reason) or '여러 날짜 구분 표시'})
+    return result,pd.DataFrame(changes,columns=['REV','원본 행','필드','정리 전','정리 후','사유'])
+
+
+def revision_table_html(df):
+    """pandas.to_html의 줄바꿈 이스케이프를 피하고 안전하게 셀을 렌더링합니다."""
+    from html import escape
+    columns=[c for c in df.columns if c not in ['원본 행','ID','버전']]
+    def cell(value):
+        return escape(str(value)).replace('\r\n','\n').replace('\r','\n').replace('\n','<br>')
+    head='<thead><tr>'+''.join('<th>'+escape(c)+'</th>' for c in columns)+'</tr></thead>'
+    rows=''.join('<tr>'+''.join('<td>'+cell(row[c])+'</td>' for c in columns)+'</tr>' for _,row in df.iterrows())
+    return '<table class="rev-history-table">'+head+'<tbody>'+rows+'</tbody></table>'

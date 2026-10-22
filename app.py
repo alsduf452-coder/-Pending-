@@ -3,10 +3,10 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE, read_revisions, save_revision, suggest_revision, read_revision_history, REV_FIELDS
-from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision
+from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html
 
 APP_NAME='양산 설비 Pending 통합 관리'
-APP_VERSION='REV-03'
+APP_VERSION='REV-04'
 st.set_page_config(page_title=APP_NAME,page_icon='📊',layout='wide')
 st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
@@ -101,6 +101,14 @@ if page == 'REV 관리':
     if not revisions.empty:
         last=revisions.iloc[-1]
         st.success(f"목록 마지막 REV: {last['Rev No.']} · 변경일: {last['변경일자']} · 이력 {len(revisions)}건")
+    raw_revisions=revisions
+    revisions,display_changes=revision_display(raw_revisions)
+    with st.expander(f'표시 정리 내역 · {len(display_changes)}개 셀'):
+        st.caption('원본 Excel과 저장된 데이터는 보존하고, 화면·REV CSV 표기만 정리했습니다. 수정 폼에서 저장하면 정리된 값도 변경 이력에 기록됩니다.')
+        if display_changes.empty: st.info('정리가 필요한 표기가 없습니다.')
+        else:
+            st.dataframe(display_changes,hide_index=True,use_container_width=True)
+            st.download_button('표시 정리 내역 CSV',safe_export(display_changes).to_csv(index=False).encode('utf-8-sig'),'rev_display_changes.csv','text/csv')
     st.subheader('REV 변경 이력')
     rev_query=st.text_input('REV 이력 검색',placeholder='변경내용 / 작성자 / 키워드 검색',key='rev_search')
     filtered=revisions
@@ -110,7 +118,7 @@ if page == 'REV 관리':
         st.info('검색 조건에 맞는 REV 이력이 없습니다.')
     else:
         # escape=True로 Excel의 HTML을 실행하지 않고, 줄바꿈이 보이는 전체 표를 제공합니다.
-        table=filtered.drop(columns=['원본 행','ID','버전']).to_html(index=False,escape=True,classes='rev-history-table')
+        table=revision_table_html(filtered)
         st.markdown("""<style>
         .rev-history-scroll {overflow:auto;max-height:700px;border:1px solid #dbe3ef;border-radius:10px;background:white}
         .rev-history-table {width:100%;border-collapse:collapse;font-size:14px;min-width:950px}
@@ -124,7 +132,7 @@ if page == 'REV 관리':
         st.subheader(f"REV {filtered.loc[selected_rev,'Rev No.']} 상세")
         for field in ['구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행','출처']:
             st.text(f"{field}: {filtered.loc[selected_rev,field]}")
-        current_rev=filtered.loc[selected_rev].to_dict()
+        current_rev=raw_revisions.loc[selected_rev].to_dict()
         with st.expander('✏️ 선택한 REV 수정'):
             st.caption('날짜는 원문 표기를 유지합니다. 새 날짜는 YYYY-MM-DD 형식으로 입력해주세요. 변경자는 직접 입력하며 로그인 인증 정보가 아닙니다.')
             with st.form(f"edit_rev_{rev_source}_{current_rev['ID']}_{current_rev['버전']}"):
@@ -132,9 +140,9 @@ if page == 'REV 관리':
                 for field in REV_FIELDS:
                     label='REV 번호' if field=='Rev No.' else field
                     if field in ['주요 변경내용','변경점 Key Word / 비고','구분','변경일자','작성자']:
-                        rev_values[field]=st.text_area(label,value=str(current_rev[field]),key=f"rev_edit_{current_rev['ID']}_{current_rev['버전']}_{field}",max_chars=20000)
+                        rev_values[field]=st.text_area(label,value=str(filtered.loc[selected_rev,field]),key=f"rev_edit_{current_rev['ID']}_{current_rev['버전']}_{field}",max_chars=20000)
                     else:
-                        rev_values[field]=st.text_input(label,value=str(current_rev[field]),key=f"rev_edit_{current_rev['ID']}_{current_rev['버전']}_{field}",max_chars=6)
+                        rev_values[field]=st.text_input(label,value=str(filtered.loc[selected_rev,field]),key=f"rev_edit_{current_rev['ID']}_{current_rev['버전']}_{field}",max_chars=6)
                 rev_actor=st.text_input('변경자 *',key=f"rev_actor_{current_rev['ID']}",max_chars=200)
                 if st.form_submit_button('REV 수정 저장'):
                     try:
@@ -249,11 +257,18 @@ else:
             fig.update_layout(margin=dict(l=0,r=0,t=10,b=0),height=290,legend_title_text='',paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig,use_container_width=True)
             st.dataframe(agg,hide_index=True,use_container_width=True)
-    st.subheader('Pending List')
-    st.dataframe(view[['ID','설비','분야','상태','Unit','내용','담당자','목표일','시트','원본 행']],hide_index=True,use_container_width=True)
+st.subheader('Pending List')
+field_labels={'HW(설계)':'H/W 설계','SW':'S/W'}
+list_fields=st.multiselect('Pending List 분야 필터',options=sorted(base['분야'].unique()),default=sorted(base['분야'].unique()),format_func=lambda x:field_labels.get(x,x),key='list_fields')
+list_view=view[view['분야'].isin(list_fields)]
+st.caption(f'목록 {len(list_view)}건 · 사이드바·검색 조건에 추가 적용됩니다. 아래 다운로드도 이 목록 기준입니다. 상단 대시보드는 사이드바 조건을 유지합니다.')
+if list_view.empty:
+    st.info('분야 필터에 맞는 Pending 항목이 없습니다.')
+else:
+    st.dataframe(list_view[['ID','설비','분야','상태','Unit','내용','담당자','목표일','시트','원본 행']],hide_index=True,use_container_width=True)
     st.subheader('항목 상세')
-    selected=st.selectbox('상세 항목 선택',view['ID'].tolist(),format_func=lambda x:f"{x} · {view.loc[view['ID']==x,'내용'].iloc[0][:65]}")
-    record=view.loc[view['ID']==selected].iloc[0]
+    selected=st.selectbox('상세 항목 선택',list_view['ID'].tolist(),format_func=lambda x:f"{x} · {list_view.loc[list_view['ID']==x,'내용'].iloc[0][:65]}")
+    record=list_view.loc[list_view['ID']==selected].iloc[0]
     st.caption(f"항목 출처: {record['시트']} / 원본 행 {record['원본 행'] or "해당 없음"}")
     for detail_field in ['설비','분야','상태','원문 상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']:
         st.text(f"{detail_field}: {record[detail_field] or '미기재'}")
@@ -290,11 +305,9 @@ else:
             history=read_history(db_path,key,selected)
             if history.empty: st.info('아직 변경 이력이 없습니다.')
             else: st.dataframe(history,hide_index=True,use_container_width=True)
-    with st.expander('원문 전체 · 숫자는 Excel 열 번호'):
-        st.text(record['원문 전체'])
 a,b=st.columns(2)
-a.download_button('↓ 조회 결과 CSV',safe_export(view).to_csv(index=False).encode('utf-8-sig'),'pending_filtered.csv','text/csv',use_container_width=True)
-b.download_button('↓ 조회 결과 Excel',excel_bytes(view),'pending_filtered.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
+a.download_button('↓ 조회 결과 CSV',safe_export(list_view).to_csv(index=False).encode('utf-8-sig'),'pending_filtered.csv','text/csv',use_container_width=True)
+b.download_button('↓ 조회 결과 Excel',excel_bytes(list_view),'pending_filtered.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
 st.caption('다운로드에는 현재 검색·필터 결과가 반영됩니다. Excel에는 분야별·설비별 집계 시트도 포함됩니다.')
 
 if mode == '실제 Excel':

@@ -89,3 +89,22 @@ def test_revision_empty_and_ui_restart(tmp_path):
     empty=original.iloc[0:0]
     assert suggest_revision(empty)=='000'
     assert read_revisions(db,'empty',empty).empty
+
+
+def test_revision_display_cleanup_and_html():
+    from pending_data import revision_display, revision_table_html
+    original=pd.DataFrame([{'Rev No.':'002','구분':'H/W\nS/W','주요 변경내용':'첫 줄\n<script>위험</script>','변경일자':'2025-08-07\n\n2025-08-07','작성자':'하대오\n이계문','변경점 Key Word / 비고':'비고/n유지','원본 행':14},
+                           {'Rev No.':'003','구분':'SW','주요 변경내용':'다른 내용','변경일자':'2025-08-07\n2025-08-08','작성자':'작성자','변경점 Key Word / 비고':'A\\nB','원본 행':15}])
+    before=original.copy(deep=True)
+    displayed,report=revision_display(original)
+    assert displayed.iloc[0]['변경일자']=='2025-08-07'
+    assert displayed.iloc[1]['변경일자']=='2025-08-07 / 2025-08-08'
+    assert displayed.iloc[0]['작성자']=='하대오 / 이계문'
+    assert displayed.iloc[0]['변경점 Key Word / 비고']=='비고/유지'
+    assert displayed.iloc[1]['변경점 Key Word / 비고']=='A\\B'
+    assert len(report)==5
+    html=revision_table_html(displayed)
+    assert 'H/W<br>S/W' in html
+    assert '\\n' not in html and '/n' not in html
+    assert '<script>' not in html and '&lt;script&gt;' in html
+    pd.testing.assert_frame_equal(original,before)
