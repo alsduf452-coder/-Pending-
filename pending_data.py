@@ -89,3 +89,32 @@ def excel_bytes(df):
         summary(df,'분야').to_excel(writer,index=False,sheet_name='분야별 집계')
         summary(df,'설비').to_excel(writer,index=False,sheet_name='설비별 집계')
     return buf.getvalue()
+
+
+def load_revision(content):
+    """Rev 관리의 저장된 요약 값과 원문 이력. 수식 재계산은 하지 않습니다."""
+    summary_columns=['구분','총 건수','조치 건수','조치율']
+    history_columns=['Rev No.','구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행']
+    wb=load_workbook(BytesIO(content),data_only=True,read_only=True)
+    try:
+        sheet=next((s for s in wb if re.sub(r'\s','',s.title).casefold()=='rev관리'),None)
+        if sheet is None:
+            return {'sheet':'','title':'','line':'','process':'','summary':pd.DataFrame(columns=summary_columns),'history':pd.DataFrame(columns=history_columns)}
+        rows=list(sheet.iter_rows(values_only=True))
+        def val(row,col):
+            return rows[row-1][col-1] if row<=len(rows) and col<=len(rows[row-1]) else None
+        totals=[]
+        for col in [2,4,6,8,10,12,14]:
+            label=clean(val(5,col))
+            if not label: continue
+            rate=val(8,col+1)
+            rate=f'{rate*100:.1f}%' if isinstance(rate,(int,float)) else clean(rate) or '미기재 / 캐시 없음'
+            totals.append({'구분':label,'총 건수':clean(val(7,col)) or '미기재 / 캐시 없음','조치 건수':clean(val(7,col+1)) or '미기재 / 캐시 없음','조치율':rate})
+        history=[]
+        for n in range(11,len(rows)+1):
+            number=clean(val(n,2))
+            if not re.fullmatch(r'\d+(?:\.0)?',number) or not clean(val(n,4)): continue
+            history.append(dict(zip(history_columns,[number,clean(val(n,3)),clean(val(n,4)),clean(val(n,10)),clean(val(n,11)),clean(val(n,12)),n])))
+        return {'sheet':sheet.title,'title':clean(val(2,4)),'line':clean(val(2,13)),'process':clean(val(3,13)), 'summary':pd.DataFrame(totals,columns=summary_columns),'history':pd.DataFrame(history,columns=history_columns)}
+    finally:
+        wb.close()

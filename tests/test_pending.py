@@ -44,3 +44,23 @@ def test_real_source_read_only():
     assert len(d[d['범위']=='주요 분야'])==174
     assert d['ID'].is_unique
     assert before==sha256(p.read_bytes()).hexdigest()
+
+def test_revision():
+    w=Workbook();s=w.active;s.title='REV 관리'
+    s.cell(2,4,'통합 이력');s.cell(2,13,'라인A');s.cell(3,13,'공정A')
+    s.cell(5,2,'Total');s.cell(7,2,10);s.cell(7,3,8);s.cell(8,3,0.8)
+    s.cell(12,2,'000');s.cell(12,4,'첫째 줄\n둘째 줄');s.cell(12,10,'2026.10.16');s.cell(12,11,'작성자')
+    b=BytesIO();w.save(b)
+    rev=load_revision(b.getvalue())
+    assert rev['line']=='라인A' and rev['summary'].iloc[0]['조치율']=='80.0%'
+    assert rev['history'].iloc[0]['Rev No.']=='000'
+    assert rev['history'].iloc[0]['주요 변경내용']=='첫째 줄\n둘째 줄'
+    assert load_revision(workbook())['history'].empty
+
+def test_real_revision():
+    p=Path('data/source.xlsx')
+    if not p.exists():
+        import pytest;pytest.skip('원본 없는 환경')
+    rev=load_revision(p.read_bytes())
+    assert len(rev['history'])==18
+    assert rev['summary'].iloc[0]['총 건수']=='174'
