@@ -28,10 +28,11 @@ def connection(path):
     return conn
 
 
-def records(path,kind):
+def records(path,kind,include_deleted=False):
     conn=connection(path)
     try:
-        return [{**json.loads(r['payload']),'_version':r['version']} for r in conn.execute('SELECT payload,version FROM entities WHERE kind=? ORDER BY rowid',(kind,))]
+        rows=[{**json.loads(r['payload']),'_version':r['version']} for r in conn.execute('SELECT payload,version FROM entities WHERE kind=? ORDER BY rowid',(kind,))]
+        return rows if include_deleted else [r for r in rows if not r.get('deletedAt')]
     finally: conn.close()
 
 
@@ -263,7 +264,7 @@ def installed_parts(equipment,chamber_id,work_logs):
         previous=parts.get(part,{})
         if not chamber.get('initialParts') and previous.get('lastWorkDate') and log['workDate']<=previous['lastWorkDate']:continue
         mismatch=bool(log.get('beforeSn') and previous.get('sn') and log['beforeSn']!=previous['sn'])
-        parts[part]={'partType':part,'sn':log['afterSn'],'installedDate':log['workDate'],'lastWorkLogId':log['id'],'status':'기록 불일치' if mismatch else log.get('issueStatus','미기재'),'basis':'작업 이력 계산'}
+        parts[part]={'partType':part,'sn':log['afterSn'],'installedDate':log['workDate'],'lastWorkDate':log['workDate'],'lastWorkLogId':log['id'],'status':'기록 불일치' if mismatch else log.get('issueStatus','미기재'),'basis':'작업 이력 계산'}
     return list(parts.values())
 
 
@@ -277,3 +278,72 @@ def trace_sn(equipments,logs,sn):
         for key,label in [('beforeSn','탈거 전 기록'),('afterSn','장착 후 기록')]:
             if log.get(key)==sn:result.append({'설비':log['equipmentId'],'챔버':log['chamberId'],'날짜':log['workDate'],'부품':log.get('targetPart',''),'구분':label,'작업 ID':log['id']})
     return sorted(result,key=lambda r:(r['날짜'],r['작업 ID'],r['구분']))
+
+
+DATE_COLOR_EXCLUDED={'MF Generator','RPSC Reactor','Matcher','RFG'}
+
+
+def installation_age(date_value,part_type,today_date):
+    from datetime import date
+    neutral={'days':None,'label':'색상 제외' if part_type in DATE_COLOR_EXCLUDED else '일자 미기재','style':'background:#e2e8f0;color:#334155;border:1px solid #94a3b8'}
+    if part_type in DATE_COLOR_EXCLUDED:return neutral
+    try:target=date.fromisoformat(str(date_value)[:10])
+    except (ValueError,TypeError):return neutral
+    days=(today_date-target).days
+    if days<0:return {**neutral,'label':'미래 일자 · 원문 검토'}
+    hue=round(135*(1-min(days/365,1)))
+    return {'days':days,'label':'1년 이상 경과' if days>=365 else f'{days}일 경과','style':'background:#fee2e2;color:#991b1b;border:1px solid #ef4444' if days>=365 else f'background:hsl({hue},65%,89%);color:hsl({hue},80%,20%);border:1px solid hsl({hue},50%,48%)'}
+
+
+def normalized_part(value):
+    raw=str(value or '').strip();value=raw.casefold()
+    matches=[('Diffuser',['diffuser','디퓨저','dif']),('Backing Plate',['backing','배킹','백킹','bp']),('Susceptor',['susceptor','서셉터','susc']),('Shadow Frame',['shadow','샤도우','섀도우','sf']),('RPSC Reactor',['rpsc','reactor']),('MF Generator',['mf generator','mfg']),('Matcher',['matcher','매처']),('RFG',['rfg'])]
+    for name,aliases in matches:
+        if any(token in value for token in aliases):return name
+    return raw if raw in PARTS else '기타 부품'
+
+
+def is_replacement(log):
+    work_type=str(log.get('workType') or '').strip()
+    if work_type in ['초기 셋업','셋업','Setup','점검','청소','CSD 조정','재측정']:return False
+    if any(k in work_type.casefold() for k in ['교체','pm','replace']):return True
+    before=log.get('beforeSn');after=log.get('afterSn')
+    if log.get('targetPart') and before and after and before!='-' and after!='-' and before!=after:return True
+    return bool(log.get('targetPart') and '교체' in (str(log.get('reason') or '')+str(log.get('details') or '')))
+
+
+def monthly_work(logs,equipment_id,year,chamber='전체 Chamber',part='전체 부품',mode='부품 교체',status='전체'):
+    rows=[]
+    for r in logs:
+        if r.get('deletedAt') or r.get('equipmentId')!=equipment_id:continue
+        if not good_date(r.get('workDate')) or int(r['workDate'][:4])!=year:continue
+        if chamber!='전체 Chamber' and r.get('chamberId')!=chamber:continue
+        if part!='전체 부품' and normalized_part(r.get('targetPart'))!=part:continue
+        if mode=='부품 교체' and (not is_replacement(r) or not r.get('targetPart')):continue
+        if status!='전체' and r.get('issueStatus')!=status:continue
+        rows.append(r)
+    counts=[{'월':f'{year}-{month:02d}',**{p:0 for p in PARTS}} for month in range(1,13)]
+    for r in rows:counts[int(r['workDate'][5:7])-1][normalized_part(r.get('targetPart'))]+=1
+    return counts,rows
+
+
+def archive_work(path,identifier,actor,reason,expected_version,restore=False):
+    if not str(actor).strip() or not str(reason).strip():raise ValueError('담당자와 사유를 입력해주세요.')
+    conn=connection(path)
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            old=conn.execute("SELECT payload,version FROM entities WHERE kind='workLogs' AND id=?",(identifier,)).fetchone()
+            if not old or old['version']!=expected_version:raise ValueError('다른 화면에서 변경됐습니다. 새로고침 후 다시 시도해주세요.')
+            item=json.loads(old['payload'])
+            if restore:
+                if not item.get('deletedAt'):raise ValueError('보관된 작업만 복원할 수 있습니다.')
+                for key in ['deletedAt','deletedBy','deletionReason']:item.pop(key,None)
+                item.update(restoredAt=now(),restoredBy=actor,restorationReason=reason)
+            else:
+                if item.get('deletedAt'):raise ValueError('이미 삭제 보관된 작업입니다.')
+                item.update(deletedAt=now(),deletedBy=actor,deletionReason=reason)
+            value=json.dumps(item,ensure_ascii=False,allow_nan=False)
+            conn.execute("UPDATE entities SET payload=?,version=version+1 WHERE kind='workLogs' AND id=?",(value,identifier))
+            conn.execute('INSERT INTO audit VALUES (?,?,?,?,?,?,?,?)',(uuid4().hex,now(),actor,'RESTORE' if restore else 'ARCHIVE','workLogs',identifier,old['payload'],value))
+    finally:conn.close()

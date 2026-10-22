@@ -136,3 +136,70 @@ def test_pending_work_link_roundtrip(tmp_path):
     assert app.radio(key='main_page').value=='Pending 현황'
     assert app.text_input(key='keyword').value=='SW:6'
     assert any('관련 H/W 작업 이력' in x.label for x in app.expander)
+
+
+def test_age_and_monthly_filters():
+    from datetime import date
+    today=date(2026,10,22)
+    assert hw.installation_age('2025-10-22','Diffuser',today)['days']==365
+    assert '#fee2e2' in hw.installation_age('2025-10-22','Diffuser',today)['style']
+    assert hw.installation_age('2025-10-23','Diffuser',today)['days']==364
+    assert hw.installation_age('2020-01-01','RFG',today)['days'] is None
+    assert hw.installation_age('no date','Diffuser',today)['days'] is None
+    assert '미래' in hw.installation_age('2027-01-01','Diffuser',today)['label']
+    logs=fixture()['workLogs']
+    logs.append({**logs[0],'id':'setup','workType':'초기 셋업','workDate':'2025-01-01'})
+    logs.append({**logs[0],'id':'other','workDate':'2026-01-01','targetPart':'Matcher'})
+    counts,rows=hw.monthly_work(logs,'A4CVD15I',2025)
+    assert len(counts)==12 and len(rows)==1
+    assert sum(sum(v for k,v in r.items() if k!='월') for r in counts)==len(rows)
+    assert len(hw.monthly_work(logs,'A4CVD15I',2025,mode='전체 작업')[1])==2
+    assert not hw.monthly_work(logs,'A4CVD15I',2026,part='Diffuser')[1]
+    assert len(hw.monthly_work(logs,'A4CVD15I',2026,part='Matcher')[1])==1
+    assert not hw.monthly_work(logs,'A4CVD15I',2025,chamber='Chamber B')[1]
+    assert not hw.is_replacement(logs[1])
+
+
+def test_archive_restore_and_backup_retains_history(tmp_path):
+    path=tmp_path/'hw.sqlite3';hw.import_backup(path,encoded(fixture()),'등록자')
+    row=hw.records(path,'workLogs')[0]
+    with pytest.raises(ValueError):hw.archive_work(path,row['id'],'담당자','',row['_version'])
+    hw.archive_work(path,row['id'],'삭제자','중복 정리',row['_version'])
+    assert hw.records(path,'workLogs')==[]
+    archived=hw.records(path,'workLogs',include_deleted=True)[0]
+    assert archived['deletionReason']=='중복 정리'
+    assert len(hw.records(path,'spacingMeasurements'))==1
+    restored=tmp_path/'restored.sqlite3';hw.import_backup(restored,hw.backup_bytes(path),'백업복원')
+    assert hw.records(restored,'workLogs')==[]
+    with pytest.raises(ValueError):hw.archive_work(path,row['id'],'복원자','복원',row['_version'],restore=True)
+    hw.archive_work(path,row['id'],'복원자','이력 복구',archived['_version'],restore=True)
+    assert len(hw.records(path,'workLogs'))==1
+    assert hw.records(path,'workLogs')[0]['restorationReason']=='이력 복구'
+    assert {'IMPORT','ARCHIVE','RESTORE'}.issubset({r['action'] for r in hw.audit_records(path)})
+
+
+def test_monthly_controls_and_card_actions(tmp_path):
+    db=setup_ui(tmp_path);hw.import_backup(db,encoded(fixture()),'등록자')
+    app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
+    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
+    assert not app.exception
+    assert app.selectbox(key='monthly_part_A4CVD15I').options[1:9]==hw.PARTS[:8]
+    app.selectbox(key='monthly_year_A4CVD15I').set_value(2025).run()
+    app.selectbox(key='monthly_chamber_A4CVD15I').set_value('전체 Chamber').run()
+    assert not app.exception
+    app.radio(key='hw_section').set_value('작업 이력').run()
+    app.button(key='card_edit_WL1').click().run()
+    assert not app.exception and app.session_state['hw_edit_id']=='WL1'
+    app.button(key='card_trace_WL1').click().run()
+    assert not app.exception and app.radio(key='hw_section').value=='부품 추적'
+    assert app.text_input(key='hw_trace_sn').value=='NEW'
+    app.radio(key='hw_section').set_value('작업 이력').run()
+    app.button(key='card_archive_WL1').click().run()
+    next(x for x in app.text_input if x.label=='삭제 담당자 *').set_value('삭제자')
+    next(x for x in app.text_input if x.label=='삭제 사유 *').set_value('중복')
+    next(x for x in app.button if x.label=='삭제 보관 확인').click().run()
+    assert not app.exception and not hw.records(db,'workLogs')
+    next(x for x in app.text_input if x.label=='복원 담당자 *').set_value('복원자')
+    next(x for x in app.text_input if x.label=='복원 사유 *').set_value('복원 테스트')
+    next(x for x in app.button if x.label=='작업 이력 복원').click().run()
+    assert not app.exception and len(hw.records(db,'workLogs'))==1

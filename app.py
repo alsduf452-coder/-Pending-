@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 PENDING 통합 관리'
-APP_VERSION='HW-01'
+APP_VERSION='HW-02'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -19,9 +19,23 @@ def select_count(group=None,value=None,state=None):
 def reset_counts():
     st.session_state.pop('count_selection',None)
 
+st.markdown("""<style>
+[data-testid="stAppViewContainer"],.stApp {background:#e2e8f0;color:#172b4d}
+[data-testid="stSidebar"] {background:#cbd5e1}
+[data-baseweb="select"]>div,[data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,[data-testid="stNumberInput"] input,[data-testid="stDateInput"] input {background:#f1f5f9!important;color:#172b4d!important;border-color:#64748b!important}
+[data-baseweb="select"]>div:focus-within,[data-testid="stTextInput"] input:focus,[data-testid="stTextArea"] textarea:focus {outline:2px solid #2563eb!important;outline-offset:1px}
+[data-baseweb="popover"] [role="listbox"] {background:#f1f5f9;color:#172b4d}
+[data-baseweb="tag"] {background:#bfdbfe!important;color:#173c72!important}
+[data-baseweb="radio"] {color:#172b4d}
+label[data-baseweb="radio"]:has(input:checked) {background:#bfdbfe;border-radius:6px;outline:1px solid #64748b;padding:4px}
+[data-testid="stButton"] button,[data-testid="stDownloadButton"] button {border:1px solid #64748b;background:#f1f5f9;color:#173c72}
+[data-testid="stButton"] button:hover,[data-testid="stDownloadButton"] button:hover {background:#bfdbfe;border-color:#1d4ed8;color:#15396b}
+[data-testid="stExpander"] {background:#e8eef5;border-color:#94a3b8}
+[data-testid="stForm"] {border-color:#94a3b8}
+</style>""",unsafe_allow_html=True)
 st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
-[data-testid="stMetric"] {background:white;border:1px solid #e4e9f2;border-radius:14px;padding:20px}
+[data-testid="stMetric"] {background:#f1f5f9;border:1px solid #e4e9f2;border-radius:14px;padding:20px}
 h1 {letter-spacing:-.7px;font-size:clamp(16px,2.2vw,30px)!important;white-space:nowrap} .sidebar-brand {display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:clamp(10px,1.1vw,14px);font-weight:700;margin:12px 0} .sidebar-brand svg {width:26px;height:26px;flex-shrink:0} div[class*=st-key-kpi_] button p {font-size:28px;font-weight:700} div[class*=st-key-kpi_] button {width:100%;min-height:70px} [data-testid="stSidebar"] {border-right:1px solid #e4e9f2}
 </style>''',unsafe_allow_html=True)
 

@@ -248,7 +248,7 @@ def data_management(path,data_dir):
     upload=st.file_uploader('H/W JSON 백업 업로드',type=['json'],key='hw_import')
     if upload:
         try:
-            current={k:store.records(path,k) for k in store.KINDS}
+            current={k:store.records(path,k,include_deleted=True) for k in store.KINDS}
             plan=store.parse_import(upload.getvalue(),current)
             table([{'종류':store.KINDS[k],'가져올 유효 항목':len(rows),'기존 ID 중복':sum(r['id'] in {e['id'] for e in current[k]} for r in rows)} for k,rows in plan['records'].items()])
             if plan['mode']=='sample':st.warning('백업의 모드가 sample입니다. 실제 원본과 대조한 데이터인지 검토해주세요. 자동으로 실제 데이터라고 확정하지 않습니다.')
@@ -280,13 +280,25 @@ def data_management(path,data_dir):
 
 def render_hw(data_dir,context=None):
     path=data_dir/'hw_history.sqlite3'
+    st.markdown("""<style>
+.hw-parts-scroll {overflow:auto;border:1px solid #94a3b8;border-radius:8px;margin-bottom:16px}
+.hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:900px;font-size:13px}
+.hw-parts-table th {background:#cbd5e1;text-align:left;padding:10px;border:1px solid #94a3b8}
+.hw-parts-table td {padding:10px;border:1px solid #b6c4d5}
+.hw-work-badges {display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.hw-work-badges span {background:#dbeafe;border:1px solid #7095c6;color:#173c72;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:600}
+.hw-work-sn {background:#d9e3ef;border:1px solid #94a3b8;border-radius:6px;padding:9px;color:#173c72;font-size:13px}
+</style>""",unsafe_allow_html=True)
     st.header('설비 H/W 이력관리')
     st.caption('로컬 저장 · 기존 Pending·REV 저장소 보존 · Firebase 자동 접속 없음')
     conn=store.connection(path)
     try:sample_import=bool(conn.execute("SELECT 1 FROM imports WHERE mode='sample'").fetchone())
     finally:conn.close()
     if sample_import:st.warning('가져온 데이터에 sample 모드로 내보낸 백업이 포함되어 있습니다. 실제 원본과 대조 전에는 검증된 운영 데이터로 간주하지 마세요.')
-    if st.session_state.pop('hw_saved',None):st.success('저장했습니다. 변경 이력을 기록했습니다.')
+    saved_message=st.session_state.pop('hw_saved',None)
+    if saved_message:
+        st.success(saved_message if isinstance(saved_message,str) else '저장했습니다. 변경 이력을 기록했습니다.')
+        st.session_state.pop('hw_edit_id',None)
     section=st.radio('H/W 메뉴',['설비 현황','작업 이력','부품 추적','Spacing','Flatness','데이터 관리'],horizontal=True,key='hw_section')
     if section=='데이터 관리':data_management(path,data_dir);return
     equipments=store.records(path,'equipments')
@@ -318,11 +330,10 @@ def render_hw(data_dir,context=None):
         for ch in chambers if chamber=='전체' else [chamber]:
             st.subheader(ch)
             parts=store.installed_parts(lookup[equipment],ch,logs)
-            table([{'부품':p['partType'],'S/N':p.get('sn',''),'장착일':p.get('installedDate',''),'상태':p.get('status',''),'산출 근거':p.get('basis',''),'관련 작업':p.get('lastWorkLogId','')} for p in parts])
+            installed_table(parts)
         st.caption('초기 장착 기준에 시간순 부품 교체 이력을 적용한 결과입니다. 검토 표시가 있는 작업은 자동 반영하지 않습니다. 기록 불일치는 원본과 대조해주세요.')
-        monthly=pd.DataFrame([{'월':r['workDate'][:7],'작업 유형':r['workType']} for r in logs if r['equipmentId']==equipment and (chamber=='전체' or r['chamberId']==chamber)])
-        if not monthly.empty:
-            st.subheader('월별 작업 건수');st.bar_chart(monthly.groupby('월').size())
+        st.caption('색상 기준: 장착일·최근 변경일 각각 0~364일은 초록→노랑→주황, 365일 이상은 빨강입니다. 경과 표시는 최근 변경일(없으면 장착일) 기준입니다. 원본처럼 RFG·Matcher·RPSC Reactor·MF Generator는 색상에서 제외합니다.')
+        monthly_chart(logs,equipment,chambers)
         with st.expander('설비 이름·고객사 수정'):
             eq=lookup[equipment]
             with st.form(f'equipment_edit_{equipment}_{eq["_version"]}'):
@@ -338,18 +349,23 @@ def render_hw(data_dir,context=None):
         query=st.text_input('작업 이력 검색 · 부품/SN/내용/담당자',key='hw_work_search')
         with st.expander('＋ 작업 이력 등록',expanded=bool(st.session_state.get('pending_hw_prefill'))):work_form(path,equipment,chambers,context)
         rows=filter_rows(logs,equipment,chamber,query)
+        work_trash(path,equipment)
         if not rows:st.info('해당 조건의 작업 이력이 없습니다.');return
         df=pd.DataFrame([{'ID':r['id'],'설비':r['equipmentId'],'챔버':r['chamberId'],'작업일':r['workDate'],'작업':r['workType'],'부품':r.get('targetPart',''),'교체 전 S/N':r.get('beforeSn',''),'교체 후 S/N':r.get('afterSn',''),'내용':r.get('details',''),'작업자':r.get('worker',''),'결과':r.get('issueStatus','')} for r in rows])
-        st.dataframe(df,hide_index=True,use_container_width=True);export_buttons(df,'hw_work_logs')
+        work_cards(path,rows,equipment,chambers,context)
+        with st.expander('표로 보기 · Excel/CSV 다운로드'):
+            st.dataframe(df,hide_index=True,use_container_width=True);export_buttons(df,'hw_work_logs')
         indexed={r['id']:r for r in rows}
-        selected=st.selectbox('작업 상세 선택',list(indexed),format_func=lambda x:f"{indexed[x]['workDate']} · {indexed[x].get('targetPart','')} · {x}")
+        if st.session_state.get('hw_work_detail') not in indexed:st.session_state['hw_work_detail']=next(iter(indexed))
+        selected=st.selectbox('작업 상세 선택',list(indexed),key='hw_work_detail',format_func=lambda x:f"{indexed[x]['workDate']} · {indexed[x].get('targetPart','')} · {x}")
         item=indexed[selected]
         st.write(item.get('details',''));st.caption('작업 사유: '+item.get('reason',''))
         if item.get('isAmbiguous'):st.warning(item.get('ambiguityReason') or '원본 검토 표시가 있는 기록입니다.')
         if item.get('source'):st.json(item['source'])
         show_pending_link(item.get('pendingLink'),context)
         attachments(path,item)
-        with st.expander('작업 이력 수정'):work_form(path,equipment,chambers,context,item)
+        if st.session_state.get('hw_edit_id')!=item['id']:
+            with st.expander('작업 이력 수정'):work_form(path,equipment,chambers,context,item)
         with st.expander('이 작업의 변경 이력'):show_audit(path,item['id'])
     elif section=='부품 추적':
         st.caption('부품 이동 확인을 위해 전체 설비의 동일 S/N 기록을 조회합니다.')
@@ -360,3 +376,113 @@ def render_hw(data_dir,context=None):
             if traced:export_buttons(pd.DataFrame(traced),'hw_part_trace')
         else:st.info('부품 S/N을 입력하면 설비·챔버 간 기록을 확인할 수 있습니다.')
     else:measurement_view(path,'spacingMeasurements' if section=='Spacing' else 'flatnessMeasurements',equipment,chamber,chambers,logs)
+
+
+def installed_table(parts):
+    from html import escape
+    rows=[]
+    headers=['부품','S/N','장착일','최근 변경일','경과','상태','산출 근거','관련 작업']
+    for p in parts:
+        recent=p.get('lastWorkDate') or p.get('installedDate','')
+        age=store.installation_age(recent,p['partType'],today())
+        installed_age=store.installation_age(p.get('installedDate',''),p['partType'],today())
+        cells=[p['partType'],p.get('sn',''),p.get('installedDate',''),recent,age['label'],p.get('status',''),p.get('basis',''),p.get('lastWorkLogId','')]
+        rows.append('<tr>'+''.join(f'<td style="{installed_age["style"] if i==2 else age["style"] if i in [3,4] else ""}">'+escape(str(v))+'</td>' for i,v in enumerate(cells))+'</tr>')
+    st.markdown('<div class="hw-parts-scroll"><table class="hw-parts-table"><thead><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>',unsafe_allow_html=True)
+
+
+def monthly_chart(logs,equipment,chambers):
+    st.subheader('월별 작업 · 부품 교체 건수')
+    eq_logs=[r for r in logs if r['equipmentId']==equipment]
+    years=sorted({int(r['workDate'][:4]) for r in eq_logs if store.good_date(r.get('workDate'))}|{today().year},reverse=True)
+    with st.container(border=True):
+        a,b,c=st.columns(3)
+        replacement_years=[int(r['workDate'][:4]) for r in eq_logs if store.good_date(r.get('workDate')) and store.is_replacement(r)]
+        existing_years=[int(r['workDate'][:4]) for r in eq_logs if store.good_date(r.get('workDate'))]
+        default_year=max(replacement_years or existing_years or [today().year])
+        year=a.selectbox('집계 연도',years,index=years.index(default_year),key=f'monthly_year_{equipment}')
+        chamber=b.selectbox('집계 Chamber',['전체 Chamber']+chambers,key=f'monthly_chamber_{equipment}')
+        part=c.selectbox('교체 부품 · 표준 8종',['전체 부품']+store.PARTS,key=f'monthly_part_{equipment}')
+        a,b=st.columns(2)
+        mode=a.selectbox('집계 대상',['부품 교체','전체 작업'],key=f'monthly_mode_{equipment}')
+        status=b.selectbox('집계 작업 결과',['전체','정상완료','조치필요','모니터링중','이슈발생'],key=f'monthly_status_{equipment}')
+        counts,selected=store.monthly_work(logs,equipment,year,chamber,part,mode,status)
+        frame=pd.DataFrame(counts).set_index('월')
+        st.caption(f'{year}년 / {chamber} / {part} · {len(selected)}건 · 월별 필터는 위 장착 현황의 챔버 선택과 별도로 적용됩니다.')
+        st.bar_chart(frame[store.PARTS if part=='전체 부품' else [part]])
+        st.caption('초기 셋업·점검은 부품 교체 집계에서 제외합니다. 전체 작업을 선택하면 포함합니다. 같은 S/N의 PM도 교체/PM 유형이면 1건으로 집계합니다.')
+        with st.expander('월별 집계 표와 대상 이력'):
+            st.dataframe(frame,use_container_width=True)
+            table([{'ID':r['id'],'날짜':r['workDate'],'챔버':r['chamberId'],'부품':r.get('targetPart',''),'유형':r.get('workType',''),'결과':r.get('issueStatus','')} for r in selected])
+            export_buttons(frame.reset_index(),'hw_monthly')
+
+
+def choose_work(identifier,edit=False):
+    st.session_state['hw_work_detail']=identifier
+    st.session_state['hw_edit_id']=identifier if edit else None
+
+
+def trace_work(sn):
+    st.session_state['hw_trace_sn']=sn
+    st.session_state['hw_section']='부품 추적'
+
+
+def request_archive(identifier):
+    st.session_state['hw_archive_id']=identifier
+
+
+def work_cards(path,rows,equipment,chambers,context):
+    from html import escape
+    rows=sorted(rows,key=lambda r:(r.get('workTimestamp') or r['workDate'],r.get('workOrder') or 1,r['id']),reverse=True)
+    pages=max(1,math.ceil(len(rows)/10))
+    page=st.number_input('작업 카드 페이지 · 10건씩',min_value=1,max_value=pages,value=1,step=1,key=f'work_page_{equipment}_{len(rows)}')
+    st.caption(f'작업 및 교체 이력 {len(rows)}건 · 카드의 기능 버튼을 눌러 실행하세요.')
+    for item in rows[(page-1)*10:page*10]:
+        identifier=item['id']
+        with st.container(border=True):
+            badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart',''),item.get('issueStatus','')]
+            st.markdown('<div class="hw-work-badges">'+''.join('<span>'+escape(str(x))+'</span>' for x in badges)+'</div>',unsafe_allow_html=True)
+            st.markdown('<div class="hw-work-sn">교체 전 S/N: <b>'+escape(str(item.get('beforeSn') or '미기재'))+'</b> → 교체 후 S/N: <b>'+escape(str(item.get('afterSn') or '미기재'))+'</b></div>',unsafe_allow_html=True)
+            st.text('사유: '+str(item.get('reason') or '미기재'))
+            if item.get('details'):st.text('내용: '+item['details'])
+            st.caption('작업자: '+str(item.get('worker') or '미기재'))
+            a,b,c,d=st.columns(4)
+            a.button('상세',key=f'card_detail_{identifier}',on_click=choose_work,args=(identifier,))
+            b.button('수정',key=f'card_edit_{identifier}',on_click=choose_work,args=(identifier,True))
+            c.button('삭제',key=f'card_archive_{identifier}',on_click=request_archive,args=(identifier,))
+            sn=item.get('afterSn') or item.get('beforeSn') or ''
+            d.button('부품 이동 추적',key=f'card_trace_{identifier}',on_click=trace_work,args=(sn,),disabled=not sn)
+            if st.session_state.get('hw_edit_id')==identifier:
+                st.subheader('선택한 작업 수정')
+                work_form(path,equipment,chambers,context,item)
+            if st.session_state.get('hw_archive_id')==identifier:
+                st.warning('삭제하면 장착 현황 계산·월별 집계·기본 목록에서 제외됩니다. 원문과 첨부·측정 기록은 보존하며 삭제 보관함에서 복원할 수 있습니다.')
+                with st.form(f'archive_form_{identifier}_{item["_version"]}'):
+                    actor=st.text_input('삭제 담당자 *')
+                    reason=st.text_input('삭제 사유 *')
+                    if st.form_submit_button('삭제 보관 확인'):
+                        try:
+                            store.archive_work(path,identifier,actor,reason,item['_version'])
+                            st.session_state.pop('hw_archive_id',None)
+                            st.session_state.pop('hw_edit_id',None)
+                            st.session_state['hw_saved']='작업을 삭제 보관했습니다.';st.rerun()
+                        except Exception as exc:st.error(str(exc))
+                st.button('삭제 취소',key=f'cancel_archive_{identifier}',on_click=lambda:st.session_state.pop('hw_archive_id',None))
+
+
+def work_trash(path,equipment):
+    rows=[r for r in store.records(path,'workLogs',include_deleted=True) if r.get('deletedAt') and r['equipmentId']==equipment]
+    with st.expander(f'삭제 보관함 · {len(rows)}건'):
+        if not rows:st.caption('보관된 작업이 없습니다.');return
+        indexed={r['id']:r for r in rows}
+        selected=st.selectbox('복원할 작업',list(indexed),format_func=lambda x:f"{indexed[x]['workDate']} · {indexed[x].get('targetPart','')} · {x}")
+        item=indexed[selected]
+        st.text('삭제 사유: '+item.get('deletionReason',''))
+        with st.form(f'restore_work_{selected}_{item["_version"]}'):
+            actor=st.text_input('복원 담당자 *')
+            reason=st.text_input('복원 사유 *')
+            if st.form_submit_button('작업 이력 복원'):
+                try:
+                    store.archive_work(path,selected,actor,reason,item['_version'],restore=True)
+                    st.session_state['hw_saved']='작업을 복원했습니다.';st.rerun()
+                except Exception as exc:st.error(str(exc))
