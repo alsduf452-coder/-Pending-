@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 PENDING 통합 관리'
-APP_VERSION='HW-05'
+APP_VERSION='HW-06'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -172,8 +172,18 @@ if page == 'REV 관리':
         st.caption('표 안에서 스크롤하면 전체 이력을 볼 수 있습니다. 변경내용은 줄바꿈을 유지합니다.')
         selected_rev=st.selectbox('REV 상세 선택',list(reversed(filtered.index.tolist())),format_func=lambda i:f"REV {filtered.loc[i,'Rev No.']} · {filtered.loc[i,'변경일자']}")
         st.subheader(f"REV {filtered.loc[selected_rev,'Rev No.']} 상세")
+        from html import escape
+        detail_rows=[]
         for field in ['구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행','출처']:
-            st.text(f"{field}: {filtered.loc[selected_rev,field]}")
+            value=filtered.loc[selected_rev,field]
+            detail_rows.append(f'<tr><th scope="row">{escape(field)}</th><td>{escape(str(value))}</td></tr>')
+        st.markdown("""<style>
+        .rev-detail-frame {overflow:hidden;border:1px solid #94a3b8;border-radius:10px;margin:8px 0 20px}
+        .rev-detail-grid {width:100%;border-collapse:collapse;table-layout:fixed;color:#172b4d;background:#f1f5f9;font-size:15px}
+        .rev-detail-grid th,.rev-detail-grid td {border:1px solid #94a3b8;padding:14px 16px;vertical-align:top;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
+        .rev-detail-grid th {width:23%;background:#cbd5e1;font-weight:600}
+        .rev-detail-grid tr:nth-child(even) td {background:#e8eef5}
+        </style>"""+'<div class="rev-detail-frame"><table class="rev-detail-grid" aria-label="REV 상세"><tbody>'+''.join(detail_rows)+'</tbody></table></div>',unsafe_allow_html=True)
         current_rev=raw_revisions.loc[selected_rev].to_dict()
         with st.expander('✏️ 선택한 REV 수정'):
             st.caption('날짜는 원문 표기를 유지합니다. 새 날짜는 YYYY-MM-DD 형식으로 입력해주세요. 변경자는 직접 입력하며 로그인 인증 정보가 아닙니다.')

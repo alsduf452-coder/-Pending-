@@ -83,7 +83,7 @@ def test_revision_empty_and_ui_restart(tmp_path):
     again=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
     again.radio(key='main_page').set_value('REV 관리').run()
     assert not again.exception
-    assert any('화면 수정 성공' in x.value for x in again.text)
+    assert any('rev-detail-grid' in x.value and '화면 수정 성공' in x.value and '<th scope="row">주요 변경내용</th>' in x.value for x in again.markdown)
     assert len(read_revisions(db,key,original))==2
     assert source.read_bytes()==content
     empty=original.iloc[0:0]
