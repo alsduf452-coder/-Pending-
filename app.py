@@ -2,11 +2,11 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE
+from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE, read_revisions, save_revision, suggest_revision, read_revision_history, REV_FIELDS
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision
 
 APP_NAME='양산 설비 Pending 통합 관리'
-APP_VERSION='REV-02'
+APP_VERSION='REV-03'
 st.set_page_config(page_title=APP_NAME,page_icon='📊',layout='wide')
 st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
@@ -63,18 +63,44 @@ if page == 'REV 관리':
         st.stop()
     st.subheader(revision['title'] or 'CVD15I / CVD45I Pending List 통합 이력 관리')
     st.caption(f"라인: {revision['line'] or '미기재'} · 공정: {revision['process'] or '미기재'} · 원본 시트: {revision['sheet']}")
-    st.info('Excel 원본에 저장된 요약과 REV 이력입니다. 앱에서 추가·수정한 내용은 「Pending 현황」에서 확인하세요.')
+    st.info('요약표는 Excel 원본 기준입니다. 아래 REV 이력에는 화면에서 등록·수정한 내용도 포함됩니다. Pending 항목의 추가·수정은 REV에 자동 등록되지 않습니다.')
     totals=revision['summary']
     st.subheader('분야별 요약 · Excel 기준')
     # Excel과 같은 가로 배열. 저장된 수식 값이 없으면 추정하지 않습니다.
     st.dataframe(totals.set_index('구분').T,use_container_width=True)
     st.caption('총 건수·조치 건수·조치율은 Excel 저장값이며 수식을 재계산하지 않습니다. 고객사 요청은 Total과 별도 집계입니다.')
-    revisions=revision['history']
-    if revisions.empty:
-        st.info('REV 변경 이력이 없습니다.')
+    rev_source=source_key(content)
+    try:
+        revisions=read_revisions(db_path,rev_source,revision['history'])
+    except Exception as exc:
+        st.error(f'REV 저장소를 읽지 못했습니다: {exc}')
         st.stop()
-    last=revisions.iloc[-1]
-    st.success(f"원본 마지막 REV: {last['Rev No.']} · 변경일: {last['변경일자']} · 이력 {len(revisions)}건")
+    if st.session_state.pop('rev_saved',False):
+        st.success('REV를 저장하고 변경 이력을 기록했습니다. 검색 중이면 검색어를 지워 전체 목록을 확인하세요.')
+        for input_key in ['new_rev_category','new_rev_text','new_rev_date','new_rev_author','new_rev_notes','new_rev_actor']:
+            st.session_state.pop(input_key,None)
+    with st.expander('＋ 새 REV 등록',expanded=True):
+        st.caption('원본 Excel은 보존합니다. 신규 REV와 수정 사항은 기존 데이터베이스에 저장되어 재실행 후에도 유지됩니다.')
+        with st.form('add_revision',clear_on_submit=False):
+            new_rev_no=st.text_input('REV 번호 *',value=suggest_revision(revisions),key=f'new_rev_no_{len(revisions)}',max_chars=6)
+            new_rev_category=st.text_input('구분',key='new_rev_category',placeholder='예: H/W, S/W, 공정')
+            new_rev_text=st.text_area('주요 변경내용 *',key='new_rev_text',max_chars=20000)
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            new_rev_date=st.date_input('변경일자 *',value=datetime.now(ZoneInfo('Asia/Seoul')).date(),key='new_rev_date')
+            new_rev_author=st.text_input('작성자 *',key='new_rev_author',max_chars=200)
+            new_rev_notes=st.text_area('변경점 Key Word / 비고',key='new_rev_notes',max_chars=10000)
+            new_rev_actor=st.text_input('등록자 *',key='new_rev_actor',max_chars=200)
+            if st.form_submit_button('새 REV 저장'):
+                try:
+                    save_revision(db_path,rev_source,revision['history'],{'Rev No.':new_rev_no,'구분':new_rev_category,'주요 변경내용':new_rev_text,'변경일자':new_rev_date,'작성자':new_rev_author,'변경점 Key Word / 비고':new_rev_notes},new_rev_actor)
+                    st.session_state['rev_saved']=True
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f'저장하지 못했습니다: {exc}')
+    if not revisions.empty:
+        last=revisions.iloc[-1]
+        st.success(f"목록 마지막 REV: {last['Rev No.']} · 변경일: {last['변경일자']} · 이력 {len(revisions)}건")
     st.subheader('REV 변경 이력')
     rev_query=st.text_input('REV 이력 검색',placeholder='변경내용 / 작성자 / 키워드 검색',key='rev_search')
     filtered=revisions
@@ -84,7 +110,7 @@ if page == 'REV 관리':
         st.info('검색 조건에 맞는 REV 이력이 없습니다.')
     else:
         # escape=True로 Excel의 HTML을 실행하지 않고, 줄바꿈이 보이는 전체 표를 제공합니다.
-        table=filtered.drop(columns=['원본 행']).to_html(index=False,escape=True,classes='rev-history-table')
+        table=filtered.drop(columns=['원본 행','ID','버전']).to_html(index=False,escape=True,classes='rev-history-table')
         st.markdown("""<style>
         .rev-history-scroll {overflow:auto;max-height:700px;border:1px solid #dbe3ef;border-radius:10px;background:white}
         .rev-history-table {width:100%;border-collapse:collapse;font-size:14px;min-width:950px}
@@ -96,9 +122,40 @@ if page == 'REV 관리':
         st.caption('표 안에서 스크롤하면 전체 이력을 볼 수 있습니다. 변경내용은 줄바꿈을 유지합니다.')
         selected_rev=st.selectbox('REV 상세 선택',list(reversed(filtered.index.tolist())),format_func=lambda i:f"REV {filtered.loc[i,'Rev No.']} · {filtered.loc[i,'변경일자']}")
         st.subheader(f"REV {filtered.loc[selected_rev,'Rev No.']} 상세")
-        for field in ['구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행']:
+        for field in ['구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고','원본 행','출처']:
             st.text(f"{field}: {filtered.loc[selected_rev,field]}")
-    st.download_button('REV 이력 CSV 다운로드',safe_export(filtered).to_csv(index=False).encode('utf-8-sig'),'excel_rev_history.csv','text/csv')
+        current_rev=filtered.loc[selected_rev].to_dict()
+        with st.expander('✏️ 선택한 REV 수정'):
+            st.caption('날짜는 원문 표기를 유지합니다. 새 날짜는 YYYY-MM-DD 형식으로 입력해주세요. 변경자는 직접 입력하며 로그인 인증 정보가 아닙니다.')
+            with st.form(f"edit_rev_{rev_source}_{current_rev['ID']}_{current_rev['버전']}"):
+                rev_values={}
+                for field in REV_FIELDS:
+                    label='REV 번호' if field=='Rev No.' else field
+                    if field in ['주요 변경내용','변경점 Key Word / 비고','구분','변경일자','작성자']:
+                        rev_values[field]=st.text_area(label,value=str(current_rev[field]),key=f"rev_edit_{current_rev['ID']}_{current_rev['버전']}_{field}",max_chars=20000)
+                    else:
+                        rev_values[field]=st.text_input(label,value=str(current_rev[field]),key=f"rev_edit_{current_rev['ID']}_{current_rev['버전']}_{field}",max_chars=6)
+                rev_actor=st.text_input('변경자 *',key=f"rev_actor_{current_rev['ID']}",max_chars=200)
+                if st.form_submit_button('REV 수정 저장'):
+                    try:
+                        count=save_revision(db_path,rev_source,revision['history'],rev_values,rev_actor,current_rev)
+                        if count:
+                            st.session_state['rev_saved']=True
+                            st.rerun()
+                        else: st.info('변경된 내용이 없습니다.')
+                    except Exception as exc:
+                        st.error(f'저장하지 못했습니다: {exc}')
+        with st.expander('선택한 REV의 등록·변경 기록'):
+            audit=read_revision_history(db_path,rev_source,current_rev['ID'])
+            if audit.empty: st.info('앱에서 등록·수정한 기록이 없습니다.')
+            else: st.dataframe(audit,hide_index=True,use_container_width=True)
+    st.download_button('REV 이력 CSV 다운로드',safe_export(filtered.drop(columns=['ID','버전'])).to_csv(index=False).encode('utf-8-sig'),'excel_rev_history.csv','text/csv')
+    with st.expander('REV 전체 등록·변경 기록'):
+        audit=read_revision_history(db_path,rev_source)
+        if audit.empty: st.info('앱에서 등록·수정한 기록이 없습니다.')
+        else:
+            st.dataframe(audit,hide_index=True,use_container_width=True)
+            st.download_button('REV 등록·변경 기록 CSV',safe_export(audit).to_csv(index=False).encode('utf-8-sig'),'rev_changes.csv','text/csv')
     st.stop()
 
 st.caption('Excel 첫 시트의 요약과 변경 이력은 위쪽 「REV 관리」 메뉴에서 볼 수 있습니다.')

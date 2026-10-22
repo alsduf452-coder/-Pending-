@@ -124,3 +124,100 @@ def read_history(path, source, identifier=None):
     if not df.empty:
         df['변경 시각']=pd.to_datetime(df['변경 시각'],utc=True).dt.tz_convert('Asia/Seoul').dt.strftime('%Y-%m-%d %H:%M:%S KST')
     return df
+
+# REV 등록·수정은 원본 Excel 및 Pending 변경 이력과 분리해 보관합니다.
+REV_FIELDS = ['Rev No.','구분','주요 변경내용','변경일자','작성자','변경점 Key Word / 비고']
+REV_COLUMNS = REV_FIELDS + ['원본 행','출처','ID','버전']
+
+
+def revision_connection(path):
+    conn=connect(path)
+    conn.execute('CREATE TABLE IF NOT EXISTS revisions (source TEXT NOT NULL, id TEXT NOT NULL, number TEXT NOT NULL, payload TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY(source,id), UNIQUE(source,number))')
+    conn.execute('CREATE TABLE IF NOT EXISTS revision_history (seq INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, id TEXT NOT NULL, timestamp TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, field TEXT NOT NULL, before_value TEXT NOT NULL, after_value TEXT NOT NULL)')
+    conn.commit()
+    return conn
+
+
+def _revision_rows(conn, source, original):
+    rows={}
+    for _,r in original.iterrows():
+        item={field:clean(r[field]) for field in REV_FIELDS}
+        identifier=f"REV-XLSX:{r['원본 행']}"
+        item.update({'원본 행':clean(r['원본 행']),'출처':'Excel 원본','ID':identifier,'버전':0})
+        rows[identifier]=item
+    for identifier,payload,version in conn.execute('SELECT id,payload,version FROM revisions WHERE source=? ORDER BY rowid',(source,)):
+        rows[identifier]={**json.loads(payload),'ID':identifier,'버전':version}
+    return pd.DataFrame(list(rows.values()),columns=REV_COLUMNS)
+
+
+def read_revisions(path, source, original):
+    conn=revision_connection(path)
+    try: return _revision_rows(conn,source,original)
+    finally: conn.close()
+
+
+def _rev_number(value):
+    import re
+    text=clean(value)
+    if not re.fullmatch(r'[0-9]{1,6}',text):
+        raise ValueError('REV 번호는 0~999999 사이의 숫자로 입력해주세요. 예: 018')
+    return str(int(text))
+
+
+def suggest_revision(revisions):
+    numbers=[]
+    for value in revisions['Rev No.']:
+        try: numbers.append(int(value))
+        except (ValueError,TypeError): pass
+    return f'{max(numbers,default=-1)+1:03d}'
+
+
+def save_revision(path, source, original, values, actor, current=None):
+    from datetime import datetime, timezone
+    actor=clean(actor)
+    if not actor: raise ValueError('등록·변경자를 입력해주세요.')
+    values={field:clean(values.get(field)) for field in REV_FIELDS}
+    number=_rev_number(values['Rev No.'])
+    for field in ['주요 변경내용','변경일자','작성자']:
+        if not values[field]: raise ValueError(f'{field}을(를) 입력해주세요.')
+    conn=revision_connection(path)
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            live=_revision_rows(conn,source,original)
+            identifier=current['ID'] if current is not None else 'REV-ADD:'+uuid4().hex
+            previous=None
+            if current is not None:
+                found=live[live['ID']==identifier]
+                if found.empty: raise ValueError('REV를 찾지 못했습니다. 새로고침 후 다시 시도해주세요.')
+                previous=found.iloc[0].to_dict()
+                if int(previous['버전'])!=int(current['버전']):
+                    raise ValueError('다른 화면에서 REV가 변경됐습니다. 새로고침 후 다시 수정해주세요.')
+            for _,other in live.iterrows():
+                if other['ID']!=identifier and _rev_number(other['Rev No.'])==number:
+                    raise ValueError('이미 존재하는 REV 번호입니다. 다른 번호를 입력해주세요.')
+            changed={field:value for field,value in values.items() if previous is None or value!=clean(previous[field])}
+            if not changed: return 0
+            row={**values,'원본 행':previous['원본 행'] if previous else '',
+                 '출처':'Excel 원본 · 앱 수정' if previous and previous['원본 행'] else '화면 등록'}
+            version=int(previous['버전'])+1 if previous else 1
+            conn.execute('INSERT INTO revisions VALUES (?,?,?,?,?) ON CONFLICT(source,id) DO UPDATE SET number=excluded.number,payload=excluded.payload,version=excluded.version',(source,identifier,number,json.dumps(row,ensure_ascii=False),version))
+            now=datetime.now(timezone.utc).isoformat()
+            for field,value in changed.items():
+                conn.execute('INSERT INTO revision_history (source,id,timestamp,actor,action,field,before_value,after_value) VALUES (?,?,?,?,?,?,?,?)',(source,identifier,now,actor,'수정' if previous else '등록',field,clean(previous[field]) if previous else '',value))
+            return len(changed)
+    finally: conn.close()
+
+
+def read_revision_history(path, source, identifier=None):
+    conn=revision_connection(path)
+    try:
+        sql='SELECT timestamp,actor,action,id,field,before_value,after_value FROM revision_history WHERE source=?'
+        params=[source]
+        if identifier is not None: sql+=' AND id=?';params.append(identifier)
+        rows=conn.execute(sql+' ORDER BY seq DESC',params).fetchall()
+    finally: conn.close()
+    result=pd.DataFrame(rows,columns=['변경 시각','등록·변경자','작업','REV ID','변경 필드','변경 전','변경 후'])
+    if not result.empty:
+        result['변경 시각']=pd.to_datetime(result['변경 시각'],utc=True).dt.tz_convert('Asia/Seoul').dt.strftime('%Y-%m-%d %H:%M:%S KST')
+    return result
