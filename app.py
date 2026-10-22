@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 PENDING 통합 관리'
-APP_VERSION='HW-07'
+APP_VERSION='HW-08'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -344,9 +344,17 @@ st.caption(f'목록 {len(list_view)}건 · 사이드바·검색 조건에 추가
 if list_view.empty:
     st.info('분야 필터에 맞는 Pending 항목이 없습니다.')
 else:
-    st.dataframe(list_view[['ID','설비','분야','상태','Unit','내용','담당자','목표일','시트','원본 행']],hide_index=True,use_container_width=True)
+    import hashlib
+    import json
+    # 필터로 행 순서가 바뀌면 이전 위치 선택을 재사용하지 않습니다.
+    list_identity=json.dumps([source_key(content) if mode=='실제 Excel' else 'sample',list_view['ID'].tolist()],ensure_ascii=False)
+    table_key='pending_rows_'+hashlib.sha256(list_identity.encode()).hexdigest()[:20]
+    st.caption('행을 클릭하면 아래 항목 상세를 확인할 수 있습니다. 선택 전에는 첫 번째 항목을 표시합니다.')
+    event=st.dataframe(list_view[['ID','설비','분야','상태','Unit','내용','담당자','목표일','시트','원본 행']],hide_index=True,use_container_width=True,key=table_key,on_select='rerun',selection_mode='single-row')
+    selected_rows=event.selection.rows
+    selected_position=selected_rows[0] if selected_rows and 0<=selected_rows[0]<len(list_view) else 0
+    selected=list_view.iloc[selected_position]['ID']
     st.subheader('항목 상세')
-    selected=st.selectbox('상세 항목 선택',list_view['ID'].tolist(),format_func=lambda x:f"{x} · {list_view.loc[list_view['ID']==x,'내용'].iloc[0][:65]}")
     record=list_view.loc[list_view['ID']==selected].iloc[0]
     st.caption(f"항목 출처: {record['시트']} / 원본 행 {record['원본 행'] or "해당 없음"}")
     detail_fields=['설비','분야','상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']

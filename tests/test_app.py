@@ -18,7 +18,7 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
-    assert any('HW-07' in x.value for x in app.caption)
+    assert any('HW-08' in x.value for x in app.caption)
     assert app.sidebar.radio(key='main_page').value=='Pending 현황'
     assert app.radio(key='main_page').options==['Pending 현황','REV 관리','설비 H/W 이력관리']
     app.radio(key='main_page').set_value('REV 관리').run()
@@ -80,3 +80,24 @@ def test_binary_status_and_clickable_counts():
     assert not app.exception
     table=next(x.value for x in app.dataframe if {'ID','분야'}.issubset(x.value.columns))
     assert table['설비'].nunique()==1 and set(table['상태'])=={'미완료'}
+
+
+def test_pending_row_selection_and_filter_reset():
+    import hashlib
+    import json
+    from html import escape
+    app=AppTest.from_file('../app.py',default_timeout=60).run()
+    app.radio(key='data_mode').set_value('샘플 데이터').run()
+    assert not any(x.label=='상세 항목 선택' for x in app.selectbox)
+    frame=next(x.value for x in app.dataframe if 'ID' in x.value.columns)
+    table_key='pending_rows_'+hashlib.sha256(json.dumps(['sample',frame['ID'].tolist()],ensure_ascii=False).encode()).hexdigest()[:20]
+    app.session_state[table_key]={'selection':{'rows':[1],'columns':[],'cells':[]}}
+    app.run()
+    assert not app.exception
+    detail=next(x.value for x in app.markdown if 'aria-label="Pending 항목 상세"' in x.value)
+    assert escape(frame.iloc[1]['내용']) in detail
+    app.text_input(key='keyword').set_value(frame.iloc[0]['ID']).run()
+    assert not app.exception
+    filtered=next(x.value for x in app.dataframe if 'ID' in x.value.columns)
+    detail=next(x.value for x in app.markdown if 'aria-label="Pending 항목 상세"' in x.value)
+    assert escape(filtered.iloc[0]['내용']) in detail

@@ -37,7 +37,7 @@ def test_registration_screen(tmp_path):
     again=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
     assert not again.exception
     assert int(again.metric[0].value)==before+1
-    selected=next(w for w in again.selectbox if w.label=='상세 항목 선택').value
+    selected=next(w for w in again.dataframe if 'ID' in w.value.columns).value.iloc[0]['ID']
     again.text_input(key=f'actor_{selected}').set_value('화면 테스트')
     again.text_area(key=f'edit_{selected}_진행 사항').set_value('현장 조치 완료')
     next(b for b in again.button if b.label=='완료 처리 후 저장').click().run()
