@@ -344,9 +344,19 @@ def render_hw(data_dir,context=None):
 .hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:900px;font-size:13px}
 .hw-parts-table th {background:#cbd5e1;text-align:left;padding:10px;border:1px solid #94a3b8}
 .hw-parts-table td {padding:10px;border:1px solid #b6c4d5}
-.hw-work-badges {display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.hw-work-badges span {background:#dbeafe;border:1px solid #7095c6;color:#173c72;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:600}
-.hw-work-sn {background:#d9e3ef;border:1px solid #94a3b8;border-radius:6px;padding:9px;color:#173c72;font-size:13px}
+.hw-work-badges {display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-height:30px}
+.hw-work-badges span {background:#dbeafe;border:1px solid #94a3b8;color:#173c72;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
+.hw-work-badges .hw-work-date {background:transparent;border:0;padding-left:0;color:#075985}
+.hw-work-badges .hw-work-result {background:#d1fae5;border-color:#6da997;color:#065f46}
+.hw-work-sn {background:#e2e8f0;border:1px solid #94a3b8;border-radius:5px;padding:7px 10px;color:#173c72;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.hw-work-body {border-top:1px solid #b6c4d5;margin-top:10px;padding-top:10px;color:#172b4d;font-size:13px;line-height:1.6}
+.hw-work-reason,.hw-work-description {white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 7px}
+.hw-work-worker {border-top:1px solid #cbd5e1;margin-top:8px;padding-top:7px;color:#475569;font-size:12px}
+[class*="st-key-hw_work_card_"] {background:#f1f5f9;border-radius:10px}
+[class*="st-key-hw_work_card_"] [data-testid="stVerticalBlock"] {gap:6px}
+[class*="st-key-hw_work_card_"] [data-testid="stHorizontalBlock"] {gap:8px;align-items:center}
+[class*="st-key-hw_work_card_"] button {min-height:30px;padding:3px 8px}
+[class*="st-key-hw_work_card_"] button p {font-size:12px}
 </style>""",unsafe_allow_html=True)
     st.header('설비 H/W 이력관리')
     st.caption('로컬 저장 · 기존 Pending·REV 저장소 보존 · Firebase 자동 접속 없음')
@@ -498,19 +508,23 @@ def work_cards(path,rows,equipment,chambers,context):
     st.caption(f'작업 및 교체 이력 {len(rows)}건 · 카드의 기능 버튼을 눌러 실행하세요.')
     for item in rows[(page-1)*10:page*10]:
         identifier=item['id']
-        with st.container(border=True):
-            badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart',''),item.get('issueStatus','')]
-            st.markdown('<div class="hw-work-badges">'+''.join('<span>'+escape(str(x))+'</span>' for x in badges)+'</div>',unsafe_allow_html=True)
-            st.markdown('<div class="hw-work-sn">교체 전 S/N: <b>'+escape(str(item.get('beforeSn') or '미기재'))+'</b> → 교체 후 S/N: <b>'+escape(str(item.get('afterSn') or '미기재'))+'</b></div>',unsafe_allow_html=True)
-            st.text('사유: '+str(item.get('reason') or '미기재'))
-            if item.get('details'):st.text('내용: '+item['details'])
-            st.caption('작업자: '+str(item.get('worker') or '미기재'))
-            a,b,c,d=st.columns(4)
-            a.button('상세',key=f'card_detail_{identifier}',on_click=choose_work,args=(identifier,))
-            b.button('수정',key=f'card_edit_{identifier}',on_click=choose_work,args=(identifier,True))
-            c.button('삭제',key=f'card_archive_{identifier}',on_click=request_archive,args=(identifier,))
+        with st.container(border=True,key=f'hw_work_card_{identifier}'):
+            header,result,detail,edit,delete=st.columns([7,1.4,1,1,1],gap='small')
+            badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart','')]
+            badge_html=''.join(f'<span class="{"hw-work-date" if i==0 else "hw-work-result" if i==5 and x=="정상완료" else ""}">{escape(str(x))}</span>' for i,x in enumerate(badges) if x)
+            header.markdown('<div class="hw-work-badges">'+badge_html+'</div>',unsafe_allow_html=True)
+            result.markdown('<div class="hw-work-badges"><span class="'+('hw-work-result' if item.get('issueStatus')=='정상완료' else '')+'">'+escape(str(item.get('issueStatus') or '미기재'))+'</span></div>',unsafe_allow_html=True)
+            detail.button('상세',key=f'card_detail_{identifier}',on_click=choose_work,args=(identifier,),use_container_width=True)
+            edit.button('수정',key=f'card_edit_{identifier}',on_click=choose_work,args=(identifier,True),use_container_width=True)
+            delete.button('삭제',key=f'card_archive_{identifier}',on_click=request_archive,args=(identifier,),use_container_width=True)
+            serial,trace=st.columns([8,2],gap='small')
+            serial.markdown('<div class="hw-work-sn">교체 전 S/N: <b>'+escape(str(item.get('beforeSn') or '미기재'))+'</b> → 교체 후 S/N: <b>'+escape(str(item.get('afterSn') or '미기재'))+'</b></div>',unsafe_allow_html=True)
             sn=item.get('afterSn') or item.get('beforeSn') or ''
-            d.button('부품 이동 추적',key=f'card_trace_{identifier}',on_click=trace_work,args=(sn,),disabled=not sn)
+            trace.button('부품 이동 추적',key=f'card_trace_{identifier}',on_click=trace_work,args=(sn,),disabled=not sn,use_container_width=True)
+            body='<div class="hw-work-body"><div class="hw-work-reason"><b>사유:</b> '+escape(str(item.get('reason') or '미기재'))+'</div>'
+            if item.get('details'):body+='<div class="hw-work-description"><b>내용:</b> '+escape(str(item['details']))+'</div>'
+            body+='<div class="hw-work-worker">작업자: <b>'+escape(str(item.get('worker') or '미기재'))+'</b></div></div>'
+            st.markdown(body,unsafe_allow_html=True)
             if st.session_state.get('hw_edit_id')==identifier:
                 st.subheader('선택한 작업 수정')
                 work_form(path,equipment,chambers,context,item)
