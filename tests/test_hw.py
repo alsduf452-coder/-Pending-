@@ -203,3 +203,55 @@ def test_monthly_controls_and_card_actions(tmp_path):
     next(x for x in app.text_input if x.label=='복원 사유 *').set_value('복원 테스트')
     next(x for x in app.button if x.label=='작업 이력 복원').click().run()
     assert not app.exception and len(hw.records(db,'workLogs'))==1
+
+
+def test_measurement_diagrams_and_color_direction():
+    from hw_ui import flatness_color, flatness_diagram_svg, spacing_diagram_svg, spacing_table_html, MEASURE_BLUE, MEASURE_RED
+    assert flatness_color(-40,-40,19)==MEASURE_BLUE
+    assert flatness_color(19,-40,19)==MEASURE_RED
+    assert flatness_color(None,-40,19)=='#e2e8f0'
+    assert flatness_color(0,0,0)=='#64748b'
+    grid=[[-40,19,0,None,1,2,3]]*5
+    svg=flatness_diagram_svg(grid)
+    assert 'R1C1' in svg and 'R5C7' in svg and 'flatshade' in svg
+    assert MEASURE_BLUE in svg and MEASURE_RED in svg
+    assert '>0<' in svg and '>—<' in svg
+    spacing=[867.2,None,886.4,888.1,885.1,872.6,883.6,890.0,884.7]
+    html=spacing_table_html(spacing);diagram=spacing_diagram_svg(spacing)
+    assert '867.2' in html and '미측정' in html
+    assert 'GATE VALVE' in diagram and 'WINDOW' in diagram
+    assert 'P6 · G/V 중앙' in diagram and 'P9 · 중앙 좌' in diagram
+    assert 'RdBu' not in svg+diagram
+
+
+def test_measurement_split_ui_and_chamber_history(tmp_path):
+    db=setup_ui(tmp_path);data=fixture()
+    data['equipments'][0]['chambers'].append({'chamberId':'Chamber B','initialParts':{},'installedParts':{}})
+    b={**data['spacingMeasurements'][0],'id':'SP_B','chamberId':'Chamber B','relatedWorkLogId':None}
+    data['spacingMeasurements'].append(b)
+    hw.import_backup(db,encoded(data),'등록자')
+    app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
+    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
+    app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber B').run()
+    app.radio(key='hw_section').set_value('Spacing').run()
+    assert not app.exception
+    headers=[x.value for x in app.subheader]
+    assert any('왼쪽 50%' in x for x in headers) and any('오른쪽 50%' in x for x in headers)
+    histories=[x for x in headers if '측정 이력 ·' in x]
+    assert histories and all('Chamber B' in x for x in histories)
+    assert not any(x.label=='측정 기록 선택' for x in app.selectbox)
+    app.radio(key='hw_section').set_value('Flatness').run()
+    assert not app.exception
+    app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber A').run()
+    assert not app.exception
+    assert any('낮은 값 · 파랑' in x.value and '높은 값 · 빨강' in x.value for x in app.caption)
+    assert any('Chamber A Diffuser 측정 이력' in x.value for x in app.subheader)
+    key='preview_flatnessMeasurements_FL1_1'
+    app.session_state[key]={'edited_rows':{0:{'Col 1':-10.0}},'added_rows':[],'deleted_rows':[]}
+    app.run()
+    assert not app.exception
+    next(x for x in app.text_input if x.label=='수치 변경자 *').set_value('수치 편집자')
+    next(x for x in app.button if x.label=='편집한 측정값 저장').click().run()
+    assert not app.exception
+    assert hw.records(db,'flatnessMeasurements')[0]['grid'][0][0]==-10
+    assert hw.records(db,'flatnessMeasurements')[0]['grid'][0][1] is None
