@@ -60,3 +60,15 @@ def test_edits_history_and_conflict(tmp_path):
     assert update_item(db,key,changed.iloc[0].to_dict(),{'상태':'완료','완료일':'2026-10-22'},'김담당')==2
     assert apply_edits(db,key,original).iloc[0]['완료일']=='2026-10-22'
     assert apply_edits(db,'other',original).iloc[0]['완료일']==''
+
+def test_legacy_status_can_be_completed(tmp_path):
+    from pending_data import binary_status
+    db=tmp_path/'legacy.sqlite3';data=load_pending(workbook());row=data.iloc[0].to_dict()
+    conn=edit_connection(db)
+    conn.execute('INSERT INTO overrides VALUES (?,?,?)',('test',row['ID'],'{"상태":"확인 필요"}'))
+    conn.commit();conn.close()
+    effective=binary_status(apply_edits(db,'test',data)).iloc[0].to_dict()
+    assert effective['상태']=='미완료'
+    assert update_item(db,'test',effective,{'상태':'완료'},'작업자')==1
+    assert apply_edits(db,'test',data).iloc[0]['상태']=='완료'
+    assert read_history(db,'test').iloc[0]['변경 전']=='미완료'

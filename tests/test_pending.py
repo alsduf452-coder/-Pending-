@@ -21,7 +21,7 @@ def test_layout_and_status():
     assert len(d)==4
     r=d.iloc[0];assert r['상태']=='완료' and r['조치내용']=='조치 원문' and r['목표일']=='12월 24일'
     assert d['상태'].tolist()==['완료','완료','미완료','완료']
-    assert classify('')=='확인 필요'
+    assert classify('')=='미완료'
     assert classify('X')=='미완료'
 
 def test_filter_export():
@@ -64,3 +64,13 @@ def test_real_revision():
     rev=load_revision(p.read_bytes())
     assert len(rev['history'])==18
     assert rev['summary'].iloc[0]['총 건수']=='174'
+
+def test_binary_summary_and_drilldown():
+    data=pd.DataFrame({'상태':['완료','확인 필요','미완료',''], '분야':['SW','SW','공정','공정'],'설비':['CVD15I']*4})
+    normalized=binary_status(data)
+    result=summary(data,'분야')
+    assert '확인 필요' not in result.columns
+    assert result['전체'].sum()==4 and result['미완료'].sum()==3
+    assert len(drilldown_pending(normalized,{'group':'분야','value':'SW','state':'미완료'}))==1
+    assert len(drilldown_pending(normalized,{'state':'완료'}))==1
+    assert len(drilldown_pending(normalized,{'group':'분야','value':'없는분야','state':'미완료'}))==0

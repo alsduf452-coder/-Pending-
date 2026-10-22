@@ -17,7 +17,6 @@ def clean(value):
 def classify(*values):
     values = [clean(v).upper() for v in values]
     if all(v in DONE for v in values): return '완료'
-    if any(not v or v in {'확인필요','확인 필요'} for v in values): return '확인 필요'
     return '미완료'
 
 def equipment(value):
@@ -52,7 +51,7 @@ def load_pending(content):
             elif ws.title == 'software불합리':
                 r.update({'설비':v(2),'원문 상태':v(3),'상태':classify(v(3)),'목표일':v(4),'완료일':v(5),'내용':v(6),'진행 사항':v(7)})
             else:
-                r.update({'설비':v(3),'발생일':v(2),'Unit':v(4),'내용':v(5)+'\n'+v(6),'원인':v(7),'조치내용':v(8),'진행 사항':v(9),'상태':'확인 필요'})
+                r.update({'설비':v(3),'발생일':v(2),'Unit':v(4),'내용':v(5)+'\n'+v(6),'원인':v(7),'조치내용':v(8),'진행 사항':v(9),'상태':'미완료'})
             if not r['내용']: continue
             r['설비'] = equipment(r['설비'])
             r['원문 전체'] = '\n'.join(f'{i}: {clean(x)}' for i,x in enumerate(row,1) if clean(x))
@@ -69,12 +68,30 @@ def filter_pending(df, equipments, fields, states, query=''):
         result = result[result.astype(str).agg(' '.join,axis=1).str.contains(term,case=False,regex=False)]
     return result
 
+def binary_status(df):
+    result=df.copy()
+    result['상태']=result['상태'].map(lambda value:'완료' if value=='완료' else '미완료')
+    return result
+
+
 def summary(df, group):
-    if df.empty: return pd.DataFrame(columns=[group,'전체','완료','미완료','확인 필요','완료율(%)'])
-    t = pd.crosstab(df[group],df['상태']).reindex(columns=['완료','미완료','확인 필요'],fill_value=0)
+    if df.empty: return pd.DataFrame(columns=[group,'완료','미완료','전체','완료율(%)'])
+    normalized=binary_status(df)
+    t = pd.crosstab(normalized[group],normalized['상태']).reindex(columns=['완료','미완료'],fill_value=0)
     t['전체'] = t.sum(axis=1)
     t['완료율(%)'] = (t['완료']/t['전체']*100).round(1)
     return t.reset_index()
+
+
+def drilldown_pending(df, selection):
+    if not selection: return df
+    result=df
+    if selection.get('group') in ['분야','설비']:
+        result=result[result[selection['group']]==selection['value']]
+    if selection.get('state') in ['완료','미완료']:
+        result=result[result['상태']==selection['state']]
+    return result
+
 
 def safe_export(df):
     result = df.copy()

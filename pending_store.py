@@ -39,7 +39,7 @@ def add_item(path, source, values):
     if not values.get('내용'): raise ValueError('내용을 입력해주세요.')
     if values.get('분야') not in MAIN: raise ValueError('분야를 선택해주세요.')
     if values.get('설비') not in ['CVD15I','CVD45I']: raise ValueError('설비를 선택해주세요.')
-    if values.get('상태') not in ['완료','미완료','확인 필요']: raise ValueError('상태를 선택해주세요.')
+    if values.get('상태') not in ['완료','미완료']: raise ValueError('상태를 선택해주세요.')
     r = dict.fromkeys(COLUMNS, '')
     r.update({k:v for k,v in values.items() if k in COLUMNS})
     identifier = 'ADD-' + uuid4().hex
@@ -91,7 +91,7 @@ def update_item(path, source, current, values, actor):
     if not actor: raise ValueError('변경자를 입력해주세요.')
     changes={k:clean(v) for k,v in values.items() if k in EDITABLE}
     if '내용' in changes and not changes['내용']: raise ValueError('내용은 비울 수 없습니다.')
-    if changes.get('상태',current['상태']) not in ['완료','미완료','확인 필요']: raise ValueError('상태를 확인해주세요.')
+    if changes.get('상태',current['상태']) not in ['완료','미완료']: raise ValueError('상태를 확인해주세요.')
     conn=edit_connection(path)
     try:
         with conn:
@@ -99,7 +99,8 @@ def update_item(path, source, current, values, actor):
             row=conn.execute('SELECT payload FROM overrides WHERE source=? AND id=?',(source,current['ID'])).fetchone()
             previous=json.loads(row[0]) if row else {}
             for field,value in previous.items():
-                if clean(current[field])!=value:
+                stored_value=('완료' if value=='완료' else '미완료') if field=='상태' else value
+                if clean(current[field])!=stored_value:
                     raise ValueError('다른 화면에서 항목이 변경됐습니다. 새로고침 후 다시 수정해주세요.')
             changed={k:v for k,v in changes.items() if v!=clean(current[k])}
             if not changed: return 0
@@ -122,6 +123,10 @@ def read_history(path, source, identifier=None):
     finally: conn.close()
     df=pd.DataFrame(rows,columns=['변경 시각','변경자','항목 ID','변경 필드','변경 전','변경 후'])
     if not df.empty:
+        for idx,row in df.iterrows():
+            if row['변경 필드']=='상태':
+                for value_field in ['변경 전','변경 후']:
+                    if row[value_field]: df.at[idx,value_field]='완료' if row[value_field]=='완료' else '미완료'
         df['변경 시각']=pd.to_datetime(df['변경 시각'],utc=True).dt.tz_convert('Asia/Seoul').dt.strftime('%Y-%m-%d %H:%M:%S KST')
     return df
 

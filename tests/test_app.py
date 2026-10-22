@@ -17,8 +17,8 @@ def test_actual_app():
 def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
-    assert any(x.value=='양산 설비 Pending 통합 관리' for x in app.title)
-    assert any('REV-04' in x.value for x in app.caption)
+    assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
+    assert any('REV-05' in x.value for x in app.caption)
     assert app.radio(key='main_page').options==['Pending 현황','REV 관리']
     app.radio(key='main_page').set_value('REV 관리').run()
     assert not app.exception
@@ -52,3 +52,30 @@ def test_list_field_filter_and_removed_raw_expander():
     app.multiselect(key='list_fields').set_value([]).run()
     assert not app.exception
     assert any('분야 필터에 맞는' in x.value for x in app.info)
+
+def test_binary_status_and_clickable_counts():
+    app=AppTest.from_file('../app.py',default_timeout=60).run()
+    app.sidebar.radio[0].set_value('샘플 데이터').run()
+    assert not app.exception
+    assert any(x.value=='양산 설비 PENDING 통합 관리' for x in app.title)
+    assert not any('확인 필요' in x.value for x in app.caption)
+    status=next(x for x in app.sidebar.multiselect if x.label=='상태')
+    assert status.options==['완료','미완료']
+    app.button(key='kpi_done').click().run()
+    assert not app.exception
+    table=next(x.value for x in app.dataframe if {'ID','분야'}.issubset(x.value.columns))
+    assert set(table['상태'])=={'완료'}
+    app.button(key='reset_counts').click().run()
+    app.button(key='kpi_open').click().run()
+    table=next(x.value for x in app.dataframe if {'ID','분야'}.issubset(x.value.columns))
+    assert set(table['상태'])=={'미완료'}
+    app.button(key='count_분야_0_완료').click().run()
+    assert not app.exception
+    if not any('분야 필터에 맞는' in x.value for x in app.info):
+        table=next(x.value for x in app.dataframe if {'ID','분야'}.issubset(x.value.columns))
+        assert table['분야'].nunique()==1 and set(table['상태'])=={'완료'}
+    app.button(key='reset_counts').click().run()
+    app.button(key='count_설비_0_미완료').click().run()
+    assert not app.exception
+    table=next(x.value for x in app.dataframe if {'ID','분야'}.issubset(x.value.columns))
+    assert table['설비'].nunique()==1 and set(table['상태'])=={'미완료'}

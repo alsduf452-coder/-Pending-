@@ -3,15 +3,26 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE, read_revisions, save_revision, suggest_revision, read_revision_history, REV_FIELDS
-from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html
+from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
-APP_NAME='양산 설비 Pending 통합 관리'
-APP_VERSION='REV-04'
-st.set_page_config(page_title=APP_NAME,page_icon='📊',layout='wide')
+APP_NAME='양산 설비 PENDING 통합 관리'
+APP_VERSION='REV-05'
+LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
+st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
+
+
+def select_count(group=None,value=None,state=None):
+    st.session_state['count_selection']={'group':group,'value':value,'state':state}
+    st.session_state.pop('list_fields',None)
+
+
+def reset_counts():
+    st.session_state.pop('count_selection',None)
+
 st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
 [data-testid="stMetric"] {background:white;border:1px solid #e4e9f2;border-radius:14px;padding:20px}
-h1 {letter-spacing:-1.4px} [data-testid="stSidebar"] {border-right:1px solid #e4e9f2}
+h1 {letter-spacing:-.7px;font-size:clamp(16px,2.2vw,30px)!important;white-space:nowrap} .sidebar-brand {display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:clamp(10px,1.1vw,14px);font-weight:700;margin:12px 0} .sidebar-brand svg {width:26px;height:26px;flex-shrink:0} div[class*=st-key-kpi_] button p {font-size:28px;font-weight:700} div[class*=st-key-kpi_] button {width:100%;min-height:70px} [data-testid="stSidebar"] {border-right:1px solid #e4e9f2}
 </style>''',unsafe_allow_html=True)
 
 @st.cache_data(show_spinner=False)
@@ -20,7 +31,7 @@ def parse(data): return load_pending(data)
 @st.cache_data(show_spinner=False)
 def parse_revision(data): return load_revision(data)
 
-st.sidebar.title(f'📊 {APP_NAME}')
+st.sidebar.markdown(f'<div class="sidebar-brand">{LOGO_SVG}<span>{APP_NAME}</span></div>',unsafe_allow_html=True)
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
 upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
@@ -192,7 +203,7 @@ if mode == '실제 Excel':
             c1,c2,c3=st.columns(3)
             new_eq=c1.selectbox('설비 *',['CVD15I','CVD45I'],key='new_eq')
             new_field=c2.selectbox('분야 *',MAIN,key='new_field')
-            new_state=c3.selectbox('상태 *',['미완료','완료','확인 필요'],key='new_state')
+            new_state=c3.selectbox('상태 *',['미완료','완료'],key='new_state')
             new_text=st.text_area('Pending 내용 *',key='new_text',max_chars=10000)
             new_owner=st.text_input('담당자',key='new_owner',max_chars=200)
             new_unit=st.text_input('Unit',key='new_unit',max_chars=200)
@@ -212,12 +223,17 @@ if mode == '실제 Excel':
 else:
     st.info('샘플 모드에서는 실제 항목을 저장하지 않습니다. 실제 Excel 모드에서 등록해주세요.')
 st.caption(f'데이터 출처: {source} · 원본 보존 · 외부 AI 전송 없음')
+df=binary_status(df)
 scope=st.sidebar.radio('조회 범위',['주요 5개 분야','보조 시트','모든 시트'])
+count_context=(source_key(content) if mode=='실제 Excel' else 'sample',scope)
+if st.session_state.get('count_context')!=count_context:
+    reset_counts()
+    st.session_state['count_context']=count_context
 base = df[df['분야'].isin(MAIN)] if scope=='주요 5개 분야' else df[~df['분야'].isin(MAIN)] if scope=='보조 시트' else df
 with st.sidebar:
     eq=st.multiselect('설비',sorted(base['설비'].unique()),default=sorted(base['설비'].unique()))
     fields=st.multiselect('분야',sorted(base['분야'].unique()),default=sorted(base['분야'].unique()))
-    states=st.multiselect('상태',['완료','미완료','확인 필요'],default=['완료','미완료','확인 필요'])
+    states=st.multiselect('상태',['완료','미완료'],default=['완료','미완료'])
     st.caption('필터를 모두 해제하면 조회 결과는 0건입니다. 미기재 설비는 추정하지 않습니다.')
 query=st.text_input('통합 키워드 검색',key='keyword',placeholder='예: Leak / Robot / 담당자 이름 · 공백으로 여러 단어 검색')
 with st.expander('질문 형태로 키워드 찾기'):
@@ -226,24 +242,29 @@ with st.expander('질문 형태로 키워드 찾기'):
     question_terms=question
     if question:
         import re
-        for token in ['관련','항목','알려줘','보여줘','찾아줘','어떤','있나요','있어','목록','현황','건수','완료','미완료','확인 필요','CVD15I','CVD45I']:
+        for token in ['관련','항목','알려줘','보여줘','찾아줘','어떤','있나요','있어','목록','현황','건수','완료','미완료','CVD15I','CVD45I']:
             question_terms=question_terms.replace(token,' ')
         question_terms=re.sub(r'[?？.,]',' ',question_terms).strip()
 view=filter_pending(base,eq,fields,states,query)
 if question:
     asked_eq=[x for x in ['CVD15I','CVD45I'] if x in question.upper()]
     if asked_eq: view=view[view['설비'].isin(asked_eq)]
-    asked_state='미완료' if '미완료' in question else '확인 필요' if '확인 필요' in question else '완료' if '완료' in question else None
+    asked_state='미완료' if '미완료' in question else '완료' if '완료' in question else None
     if asked_state: view=view[view['상태']==asked_state]
     view=filter_pending(view,view['설비'].unique(),view['분야'].unique(),view['상태'].unique(),question_terms)
     st.caption(f'질문 해석: 설비 {asked_eq or "전체"} / 상태 {asked_state or "전체"} / 키워드 {question_terms or "없음"} · 사이드바 조건과 함께 적용')
-total=len(view); done=int((view['상태']=='완료').sum()); unknown=int((view['상태']=='확인 필요').sum())
-for col,label,value in zip(st.columns(4),['전체 건수','완료','미완료 · 확인 필요 포함','완료율'],[f'{total:,}',f'{done:,}',f'{total-done:,}',f'{done/total*100 if total else 0:.1f}%']):
-    col.metric(label,value)
-st.caption(f'현재 필터 기준 · 미완료 {total-done-unknown}건 / 확인 필요 {unknown}건 · 완료율 = 완료 ÷ 전체')
+total=len(view); done=int((view['상태']=='완료').sum())
+kpi_total,kpi_done,kpi_open,kpi_rate=st.columns(4)
+kpi_total.metric('전체 건수',f'{total:,}')
+kpi_done.caption('완료 · 숫자를 누르면 목록 조회')
+kpi_done.button(f'{done:,}',key='kpi_done',on_click=select_count,kwargs={'state':'완료'},use_container_width=True)
+kpi_open.caption('미완료 · 숫자를 누르면 목록 조회')
+kpi_open.button(f'{total-done:,}',key='kpi_open',on_click=select_count,kwargs={'state':'미완료'},use_container_width=True)
+kpi_rate.metric('완료율',f'{done/total*100 if total else 0:.1f}%')
+st.caption('현재 필터 기준 · 완료율 = 완료 ÷ 전체')
 with st.expander('집계 및 완료 판정 기준'):
-    st.write('완료는 상태 O/○/완료만 인정합니다. 고객사 요청 상단 표는 H/I 두 값이 모두 완료일 때 완료이며, 39행 이후 표는 J열을 사용합니다. 공란은 확인 필요입니다. 미완료 카드에는 확인 필요를 포함합니다.')
-    st.write('기본 집계는 HW(설계)·공정·SW·전장·기타만 포함합니다. 보조 시트는 중복 가능성이 있어 별도 조회합니다. 중복 제거, 연도 추정, 날짜 기반 지연 판정은 하지 않습니다. Rev 관리·Robot Teaching·이미지·도형은 구조화하지 않습니다. 요약 수식 대신 상세 행을 집계합니다.')
+    st.write('완료는 상태 O/○/완료만 인정합니다. 고객사 요청 상단 표는 H/I 두 값이 모두 완료일 때 완료이며, 39행 이후 표는 J열을 사용합니다. 완료로 명시되지 않은 항목과 공란은 모두 미완료로 분류합니다.')
+    st.write('기본 집계는 HW(설계)·공정·SW·전장·기타만 포함합니다. 보조 시트는 별도 조회합니다. 날짜 기반 지연 판정은 하지 않습니다. REV 원본 요약은 REV 관리에서 확인할 수 있습니다.')
 if view.empty:
     st.info('조건에 맞는 항목이 없습니다. 필터 또는 검색어를 조정해주세요.')
 else:
@@ -252,15 +273,30 @@ else:
         with col:
             st.subheader(f'{group}별 현황')
             agg=summary(view,group)
-            melted=agg.melt(id_vars=[group],value_vars=['완료','미완료','확인 필요'],var_name='상태',value_name='건수')
-            fig=px.bar(melted,x=group,y='건수',color='상태',color_discrete_map={'완료':'#2563eb','미완료':'#f59e0b','확인 필요':'#94a3b8'},barmode='stack')
-            fig.update_layout(margin=dict(l=0,r=0,t=10,b=0),height=290,legend_title_text='',paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
+            melted=agg.melt(id_vars=[group],value_vars=['완료','미완료'],var_name='상태',value_name='건수')
+            fig=px.bar(melted,x=group,y='건수',color='상태',color_discrete_map={'완료':'#2563eb','미완료':'#f59e0b'},barmode='stack')
+            fig.update_layout(margin=dict(l=0,r=0,t=10,b=0),height=270,legend_title_text='',paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig,use_container_width=True)
-            st.dataframe(agg,hide_index=True,use_container_width=True)
+            headers=st.columns([1.5,1,1,1,1.2])
+            for c,label in zip(headers,[group,'완료','미완료','전체','완료율(%)']): c.markdown(f'**{label}**')
+            for row_number,row in agg.iterrows():
+                cells=st.columns([1.5,1,1,1,1.2])
+                label={'HW(설계)':'H/W 설계','SW':'S/W'}.get(row[group],row[group])
+                cells[0].write(label)
+                for cell,status in zip(cells[1:3],['완료','미완료']):
+                    cell.button(f"{int(row[status]):,}",key=f'count_{group}_{row_number}_{status}',help=f'{label} · {status} 목록 보기',on_click=select_count,args=(group,row[group],status),use_container_width=True)
+                cells[3].write(str(int(row['전체'])))
+                cells[4].write(f"{row['완료율(%)']:.1f}")
+    st.caption('분야·설비 표의 완료 또는 미완료 숫자를 누르면 아래 Pending List가 해당 조건으로 바뀝니다.')
 st.subheader('Pending List')
 field_labels={'HW(설계)':'H/W 설계','SW':'S/W'}
 list_fields=st.multiselect('Pending List 분야 필터',options=sorted(base['분야'].unique()),default=sorted(base['분야'].unique()),format_func=lambda x:field_labels.get(x,x),key='list_fields')
-list_view=view[view['분야'].isin(list_fields)]
+selection=st.session_state.get('count_selection')
+if selection:
+    selected_label=' / '.join(str(x) for x in [selection.get('value'),selection.get('state')] if x)
+    st.info(f'숫자 선택 조건: {selected_label}')
+    st.button('숫자 선택 해제 · 전체 목록',key='reset_counts',on_click=reset_counts)
+list_view=drilldown_pending(view[view['분야'].isin(list_fields)],selection)
 st.caption(f'목록 {len(list_view)}건 · 사이드바·검색 조건에 추가 적용됩니다. 아래 다운로드도 이 목록 기준입니다. 상단 대시보드는 사이드바 조건을 유지합니다.')
 if list_view.empty:
     st.info('분야 필터에 맞는 Pending 항목이 없습니다.')
@@ -270,7 +306,7 @@ else:
     selected=st.selectbox('상세 항목 선택',list_view['ID'].tolist(),format_func=lambda x:f"{x} · {list_view.loc[list_view['ID']==x,'내용'].iloc[0][:65]}")
     record=list_view.loc[list_view['ID']==selected].iloc[0]
     st.caption(f"항목 출처: {record['시트']} / 원본 행 {record['원본 행'] or "해당 없음"}")
-    for detail_field in ['설비','분야','상태','원문 상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']:
+    for detail_field in ['설비','분야','상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']:
         st.text(f"{detail_field}: {record[detail_field] or '미기재'}")
     if mode == '실제 Excel':
         with st.expander('✏️ 항목 수정 / 완료 처리'):
@@ -280,7 +316,7 @@ else:
                 values={}
                 for field in EDITABLE:
                     if field=='상태':
-                        values[field]=st.selectbox('변경할 상태',['완료','미완료','확인 필요'],index=['완료','미완료','확인 필요'].index(record[field]),key=f'edit_{selected}_{field}')
+                        values[field]=st.selectbox('변경할 상태',['완료','미완료'],index=['완료','미완료'].index(record[field]),key=f'edit_{selected}_{field}')
                     elif field in ['내용','원인','진행 사항','조치내용']:
                         values[field]=st.text_area(field,value=str(record[field]),key=f'edit_{selected}_{field}',max_chars=10000)
                     else:
