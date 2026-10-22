@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from pending_store import set_default, source_key, add_item, read_items
+from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes
 
 st.set_page_config(page_title='Pending Intelligence',page_icon='📊',layout='wide')
@@ -17,7 +17,7 @@ def parse(data): return load_pending(data)
 
 st.sidebar.title('📊 Pending Intelligence')
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
-upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='원본을 수정하거나 서버에 저장하지 않습니다.')
+upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
 saved_default = Path(__file__).parent/'data'/'default.xlsx'
 db_path = Path(__file__).parent/'data'/'pending.sqlite3'
@@ -54,7 +54,9 @@ if mode == '실제 Excel':
     except Exception as exc:
         st.error(f'추가 항목 저장소를 읽지 못했습니다: {exc}')
         st.stop()
-    df=pd.concat([df,extra],ignore_index=True)
+    df=apply_edits(db_path,key,pd.concat([df,extra],ignore_index=True))
+    if st.session_state.pop('edit_saved',False):
+        st.success('수정 내용을 저장하고 변경 이력을 기록했습니다.')
     st.caption(f'화면 등록 항목 {len(extra)}건 포함 · 같은 Excel 파일을 기준으로 추가 항목을 보관합니다.')
     if st.session_state.pop('item_saved',False):
         st.success('항목을 저장했습니다. 대시보드·목록·다운로드에 반영했습니다. 필터 조건에 따라 목록에서 숨겨질 수 있습니다.')
@@ -135,11 +137,52 @@ else:
     selected=st.selectbox('상세 항목 선택',view['ID'].tolist(),format_func=lambda x:f"{x} · {view.loc[view['ID']==x,'내용'].iloc[0][:65]}")
     record=view.loc[view['ID']==selected].iloc[0]
     st.caption(f"항목 출처: {record['시트']} / 원본 행 {record['원본 행'] or "해당 없음"}")
-    for key in ['설비','분야','상태','원문 상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']:
-        st.text(f"{key}: {record[key] or '미기재'}")
+    for detail_field in ['설비','분야','상태','원문 상태','Unit','내용','발생일','담당자','원인','진행 사항','목표일','조치내용','완료일','조치자','45호기 적용 여부']:
+        st.text(f"{detail_field}: {record[detail_field] or '미기재'}")
+    if mode == '실제 Excel':
+        with st.expander('✏️ 항목 수정 / 완료 처리'):
+            st.caption('원본 내용은 보존하며 변경 사항만 별도로 저장합니다. 날짜는 원문을 유지하는 텍스트입니다. 새 날짜는 YYYY-MM-DD로 입력해주세요.')
+            with st.form(f'edit_{selected}'):
+                actor=st.text_input('변경자 *',key=f'actor_{selected}')
+                values={}
+                for field in EDITABLE:
+                    if field=='상태':
+                        values[field]=st.selectbox('변경할 상태',['완료','미완료','확인 필요'],index=['완료','미완료','확인 필요'].index(record[field]),key=f'edit_{selected}_{field}')
+                    elif field in ['내용','원인','진행 사항','조치내용']:
+                        values[field]=st.text_area(field,value=str(record[field]),key=f'edit_{selected}_{field}',max_chars=10000)
+                    else:
+                        values[field]=st.text_input(field,value=str(record[field]),key=f'edit_{selected}_{field}',max_chars=1000)
+                save=st.form_submit_button('수정 내용 저장')
+                complete=st.form_submit_button('완료 처리 후 저장')
+                if save or complete:
+                    if complete:
+                        from datetime import datetime
+                        from zoneinfo import ZoneInfo
+                        values['상태']='완료'
+                        if not values['완료일'].strip(): values['완료일']=datetime.now(ZoneInfo('Asia/Seoul')).date().isoformat()
+                    try:
+                        count=update_item(db_path,key,record.to_dict(),values,actor)
+                        if count:
+                            st.session_state['edit_saved']=True
+                            st.rerun()
+                        else: st.info('변경된 내용이 없습니다.')
+                    except Exception as exc:
+                        st.error(f'저장하지 못했습니다: {exc}')
+        with st.expander('이 항목의 변경 이력'):
+            history=read_history(db_path,key,selected)
+            if history.empty: st.info('아직 변경 이력이 없습니다.')
+            else: st.dataframe(history,hide_index=True,use_container_width=True)
     with st.expander('원문 전체 · 숫자는 Excel 열 번호'):
         st.text(record['원문 전체'])
 a,b=st.columns(2)
 a.download_button('↓ 조회 결과 CSV',safe_export(view).to_csv(index=False).encode('utf-8-sig'),'pending_filtered.csv','text/csv',use_container_width=True)
 b.download_button('↓ 조회 결과 Excel',excel_bytes(view),'pending_filtered.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
 st.caption('다운로드에는 현재 검색·필터 결과가 반영됩니다. Excel에는 분야별·설비별 집계 시트도 포함됩니다.')
+
+if mode == '실제 Excel':
+    with st.expander('전체 변경 이력'):
+        history=read_history(db_path,key)
+        if history.empty: st.info('아직 변경 이력이 없습니다.')
+        else:
+            st.dataframe(history,hide_index=True,use_container_width=True)
+            st.download_button('변경 이력 CSV 다운로드',safe_export(history).to_csv(index=False).encode('utf-8-sig'),'pending_history.csv','text/csv')
