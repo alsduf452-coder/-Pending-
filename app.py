@@ -2,11 +2,12 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from hw_ui import card_menu
 from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE, read_revisions, save_revision, suggest_revision, read_revision_history, REV_FIELDS
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 통합 관리'
-APP_VERSION='HW-12'
+APP_VERSION='HW-13'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -49,19 +50,13 @@ st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
 [data-testid="stMetric"] {background:#f1f5f9;border:1px solid #e4e9f2;border-radius:14px;padding:20px}
 h1 {letter-spacing:-.7px;font-size:clamp(16px,2.2vw,30px)!important;white-space:nowrap} .sidebar-brand {display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:clamp(10px,1.1vw,14px);font-weight:700;margin:12px 0} .sidebar-brand svg {width:26px;height:26px;flex-shrink:0} div[class*=st-key-kpi_] button p {font-size:28px;font-weight:700} div[class*=st-key-kpi_] button {width:100%;min-height:70px} [data-testid="stSidebar"] {border-right:1px solid #e4e9f2}
-/* 카드형 선택: 기존 라디오의 키보드 조작과 페이지 연결을 유지합니다. */
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) [role="radiogroup"] {gap:7px}
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"] {margin:0!important;padding:9px 12px!important;border:1px solid #94a3b8;border-radius:8px;background:#f1f5f9;outline:none;cursor:pointer;transition:background .15s}
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]>div:first-child {position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]>div:last-child {margin:0;padding:0}
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]:hover {background:#dbeafe;border-color:#2563eb}
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]:has(input:checked) {background:#bfdbfe;border:2px solid #1d4ed8;padding:8px 11px!important;color:#123d80;font-weight:700;box-shadow:0 1px 3px #64748b33}
-:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]:has(input:focus-visible) {outline:2px solid #0891b2;outline-offset:2px}
-:is(.st-key-main_page,.st-key-pending_scope) label[data-baseweb="radio"] {width:100%;box-sizing:border-box}
+[class*="st-key-cards_"] button {border-radius:6px;min-height:40px;font-weight:600}
+[class*="st-key-cards_"] button[kind="primary"] {background:#bfdbfe!important;color:#123d80!important;border:2px solid #1d4ed8!important}
+[class*="st-key-cards_"] button[kind="secondary"] {background:#f1f5f9!important;border:1px solid #94a3b8!important}
 .st-key-pending_kpis [data-testid="stCaptionContainer"] {min-height:22px;line-height:22px;margin:0}
-.st-key-pending_kpis [data-testid="stMetric"] {height:70px;min-height:70px;box-sizing:border-box;padding:8px 16px;border:1px solid #64748b;border-radius:8px;display:flex;flex-direction:column;justify-content:center}
+.st-key-pending_kpis [data-testid="stMetric"] {height:70px;min-height:70px;box-sizing:border-box;padding:8px 16px;border:1px solid #64748b;border-radius:8px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
 .st-key-pending_kpis [data-testid="stMetricLabel"] {display:none}
-.st-key-pending_kpis [data-testid="stMetricValue"] {font-size:28px;line-height:1.2;font-weight:700}
+.st-key-pending_kpis [data-testid="stMetricValue"] {font-size:28px;line-height:1.2;font-weight:700;text-align:center;width:100%}
 .st-key-pending_kpis [data-testid="stButton"] button {height:70px;min-height:70px;box-sizing:border-box;border-radius:8px}
 .st-key-pending_kpis [data-testid="stButton"] button p {font-size:28px;font-weight:700}
 </style>''',unsafe_allow_html=True)
@@ -74,7 +69,8 @@ def parse_revision(data): return load_revision(data)
 
 st.sidebar.markdown(f'<div class="sidebar-brand">{LOGO_SVG}<span>{APP_NAME}</span></div>',unsafe_allow_html=True)
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
-page=st.sidebar.radio('화면 선택',['Pending 현황','REV 관리','설비 H/W 이력관리'],key='main_page')
+with st.sidebar:
+    page=card_menu('화면 선택',['Pending 현황','REV 관리','설비 H/W 이력관리'],key='main_page')
 pending_filters=st.sidebar.container() if page=='Pending 현황' else None
 upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
@@ -288,7 +284,8 @@ else:
 st.caption(f'데이터 출처: {source} · 원본 보존 · 외부 AI 전송 없음')
 df=binary_status(df)
 pending_filters.markdown('#### Pending 현황 필터')
-scope=pending_filters.radio('조회 범위',['주요 5개 분야','보조 시트','모든 시트'],key='pending_scope')
+with pending_filters:
+    scope=card_menu('조회 범위',['주요 5개 분야','보조 시트','모든 시트'],key='pending_scope')
 count_context=(source_key(content) if mode=='실제 Excel' else 'sample',scope)
 if st.session_state.get('count_context')!=count_context:
     reset_counts()

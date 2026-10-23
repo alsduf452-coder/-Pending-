@@ -83,22 +83,22 @@ def setup_ui(tmp_path):
 def test_hw_without_pending_excel_and_all_screens(tmp_path):
     db=setup_ui(tmp_path)
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
+    app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
     assert not app.exception
     assert any('아직 H/W 데이터' in r.value for r in app.info)
     hw.import_backup(db,encoded(fixture()),'준비')
     app.run()
     assert not app.exception
     for section in ['작업 이력','부품 추적','Spacing','Flatness','데이터 관리','설비 현황']:
-        app.radio(key='hw_section').set_value(section).run()
+        app.button(key='nav_hw_section_'+section).click().run()
         assert not app.exception,section
 
 
 def test_hw_work_registration_ui_and_audit(tmp_path):
     db=setup_ui(tmp_path);hw.import_backup(db,encoded(fixture()),'준비')
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
-    app.radio(key='hw_section').set_value('작업 이력').run()
+    app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
+    app.button(key='nav_hw_section_'+'작업 이력').click().run()
     # New form precedes the edit form. Fill required inputs in the new form.
     next(x for x in app.text_area if x.label=='작업 내용 *').set_value('화면 신규 점검')
     next(x for x in app.text_input if x.label=='등록·변경자 *').set_value('작업자')
@@ -120,8 +120,8 @@ def test_pending_work_link_roundtrip(tmp_path):
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
     app.button(key='pending_to_hw').click().run()
     assert not app.exception
-    assert app.radio(key='main_page').value=='설비 H/W 이력관리'
-    assert app.radio(key='hw_section').value=='작업 이력'
+    assert app.session_state['main_page']=='설비 H/W 이력관리'
+    assert app.session_state['hw_section']=='작업 이력'
     next(x for x in app.text_area if x.label=='작업 내용 *').set_value('Pending 관련 교체')
     next(x for x in app.text_input if x.label=='등록·변경자 *').set_value('연결 작업자')
     next(x for x in app.button if x.label=='작업 이력 저장').click().run()
@@ -133,7 +133,7 @@ def test_pending_work_link_roundtrip(tmp_path):
     selector.set_value(saved['id']).run()
     app.button(key='hw_back_pending').click().run()
     assert not app.exception
-    assert app.radio(key='main_page').value=='Pending 현황'
+    assert app.session_state['main_page']=='Pending 현황'
     assert app.text_input(key='keyword').value=='SW:6'
     assert any('관련 H/W 작업 이력' in x.label for x in app.expander)
 
@@ -181,19 +181,19 @@ def test_archive_restore_and_backup_retains_history(tmp_path):
 def test_monthly_controls_and_card_actions(tmp_path):
     db=setup_ui(tmp_path);hw.import_backup(db,encoded(fixture()),'등록자')
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
+    app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
     assert not app.exception
     assert app.selectbox(key='monthly_part_A4CVD15I').options[1:9]==hw.PARTS[:8]
     app.selectbox(key='monthly_year_A4CVD15I').set_value(2025).run()
     app.selectbox(key='monthly_chamber_A4CVD15I').set_value('전체 Chamber').run()
     assert not app.exception
-    app.radio(key='hw_section').set_value('작업 이력').run()
+    app.button(key='nav_hw_section_'+'작업 이력').click().run()
     app.button(key='card_edit_WL1').click().run()
     assert not app.exception and app.session_state['hw_edit_id']=='WL1'
     app.button(key='card_trace_WL1').click().run()
-    assert not app.exception and app.radio(key='hw_section').value=='부품 추적'
+    assert not app.exception and app.session_state['hw_section']=='부품 추적'
     assert app.text_input(key='hw_trace_sn').value=='NEW'
-    app.radio(key='hw_section').set_value('작업 이력').run()
+    app.button(key='nav_hw_section_'+'작업 이력').click().run()
     app.button(key='card_archive_WL1').click().run()
     next(x for x in app.text_input if x.label=='삭제 담당자 *').set_value('삭제자')
     next(x for x in app.text_input if x.label=='삭제 사유 *').set_value('중복')
@@ -235,9 +235,9 @@ def test_measurement_split_ui_and_chamber_history(tmp_path):
     data['spacingMeasurements'].append(b)
     hw.import_backup(db,encoded(data),'등록자')
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
+    app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
     app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber B').run()
-    app.radio(key='hw_section').set_value('Spacing').run()
+    app.button(key='nav_hw_section_'+'Spacing').click().run()
     assert not app.exception
     headers=[x.value for x in app.subheader]
     assert any('실측 데이터' in x for x in headers) and any('측정 위치도' in x for x in headers)
@@ -245,7 +245,7 @@ def test_measurement_split_ui_and_chamber_history(tmp_path):
     histories=[x for x in headers if '측정 이력 ·' in x]
     assert histories and all('Chamber B' in x for x in histories)
     assert not any(x.label=='측정 기록 선택' for x in app.selectbox)
-    app.radio(key='hw_section').set_value('Flatness').run()
+    app.button(key='nav_hw_section_'+'Flatness').click().run()
     assert not app.exception
     app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber A').run()
     assert not app.exception
@@ -294,8 +294,8 @@ def test_flatness_type_cards_and_comparison_ui(tmp_path):
     hw.import_backup(db,encoded(data),'등록자')
     versions_before={kind:[(r['id'],r['_version']) for r in hw.records(db,kind)] for kind in hw.KINDS}
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    app.radio(key='main_page').set_value('설비 H/W 이력관리').run()
-    app.radio(key='hw_section').set_value('Flatness').run()
+    app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
+    app.button(key='nav_hw_section_'+'Flatness').click().run()
     assert not app.exception
     assert any(x.label=='Diffuser 데이터 보기' for x in app.button)
     assert any(x.label=='Susceptor 데이터 보기' for x in app.button)
@@ -316,7 +316,7 @@ def test_flatness_type_cards_and_comparison_ui(tmp_path):
     assert not app.exception
     next(x for x in app.radio if x.label=='측정 보기 방식').set_value('작업 전후 비교').run()
     assert not app.exception
-    app.radio(key='hw_section').set_value('Spacing').run()
+    app.button(key='nav_hw_section_'+'Spacing').click().run()
     next(x for x in app.radio if x.label=='측정 보기 방식').set_value('작업 전후 비교').run()
     assert not app.exception
     assert any(x.value=='Spacing 차이 항목 전후 비교' for x in app.subheader)

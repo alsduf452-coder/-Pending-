@@ -16,6 +16,17 @@ import hw_store as store
 from pending_data import safe_export
 
 
+def card_menu(label,options,key,horizontal=False):
+    if st.session_state.get(key) not in options:st.session_state[key]=options[0]
+    def select(value):st.session_state[key]=value
+    with st.container(key=f'cards_{key}'):
+        st.caption(label)
+        targets=st.columns(len(options),gap='small') if horizontal else [st]*len(options)
+        for target,option in zip(targets,options):
+            target.button(option,key=f'nav_{key}_{option}',type='primary' if st.session_state[key]==option else 'secondary',use_container_width=True,on_click=select,args=(option,))
+    return st.session_state[key]
+
+
 def today(): return datetime.now(ZoneInfo('Asia/Seoul')).date()
 
 
@@ -349,11 +360,11 @@ def render_hw(data_dir,context=None):
 .hw-work-badges .hw-work-date {background:transparent;border:0;padding-left:0;color:#075985}
 .hw-work-badges .hw-work-result {background:#d1fae5;border-color:#6da997;color:#065f46}
 .hw-work-sn {background:#e2e8f0;border:1px solid #94a3b8;border-radius:5px;padding:7px 10px;color:#173c72;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
-.hw-work-body {border-top:1px solid #b6c4d5;margin-top:10px;padding-top:10px;color:#172b4d;font-size:13px;line-height:1.6}
+.hw-work-body {border-top:1px solid #b6c4d5;margin-top:12px;padding-top:12px;color:#172b4d;font-size:13px;line-height:1.6}
 .hw-work-reason,.hw-work-description {white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 7px}
-.hw-work-worker {border-top:1px solid #cbd5e1;margin-top:8px;padding-top:7px;color:#475569;font-size:12px}
+.hw-work-worker {border-top:1px solid #cbd5e1;margin-top:10px;padding:9px 0 12px;color:#475569;font-size:12px}
 [class*="st-key-hw_work_card_"] {background:#f1f5f9;border-radius:10px}
-[class*="st-key-hw_work_card_"] [data-testid="stVerticalBlock"] {gap:6px}
+[class*="st-key-hw_work_card_"] [data-testid="stVerticalBlock"] {gap:9px}
 [class*="st-key-hw_work_card_"] [data-testid="stHorizontalBlock"] {gap:8px;align-items:center}
 [class*="st-key-hw_work_card_"] button {min-height:30px;padding:3px 8px}
 [class*="st-key-hw_work_card_"] button p {font-size:12px}
@@ -368,7 +379,7 @@ def render_hw(data_dir,context=None):
     if saved_message:
         st.success(saved_message if isinstance(saved_message,str) else '저장했습니다. 변경 이력을 기록했습니다.')
         st.session_state.pop('hw_edit_id',None)
-    section=st.radio('H/W 메뉴',['설비 현황','작업 이력','부품 추적','Spacing','Flatness','데이터 관리'],horizontal=True,key='hw_section')
+    section=card_menu('H/W 메뉴',['설비 현황','작업 이력','부품 추적','Spacing','Flatness','데이터 관리'],key='hw_section',horizontal=True)
     if section=='데이터 관리':data_management(path,data_dir);return
     equipments=store.records(path,'equipments')
     with st.expander('＋ 설비 등록'):
@@ -509,12 +520,11 @@ def work_cards(path,rows,equipment,chambers,context):
     for item in rows[(page-1)*10:page*10]:
         identifier=item['id']
         with st.container(border=True,key=f'hw_work_card_{identifier}'):
-            header,result,detail,edit,delete=st.columns([7,1.4,1,1,1],gap='small')
+            header,result,edit,delete=st.columns([8,1.4,1,1],gap='small')
             badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart','')]
             badge_html=''.join(f'<span class="{"hw-work-date" if i==0 else "hw-work-result" if i==5 and x=="정상완료" else ""}">{escape(str(x))}</span>' for i,x in enumerate(badges) if x)
             header.markdown('<div class="hw-work-badges">'+badge_html+'</div>',unsafe_allow_html=True)
             result.markdown('<div class="hw-work-badges"><span class="'+('hw-work-result' if item.get('issueStatus')=='정상완료' else '')+'">'+escape(str(item.get('issueStatus') or '미기재'))+'</span></div>',unsafe_allow_html=True)
-            detail.button('상세',key=f'card_detail_{identifier}',on_click=choose_work,args=(identifier,),use_container_width=True)
             edit.button('수정',key=f'card_edit_{identifier}',on_click=choose_work,args=(identifier,True),use_container_width=True)
             delete.button('삭제',key=f'card_archive_{identifier}',on_click=request_archive,args=(identifier,),use_container_width=True)
             serial,trace=st.columns([8,2],gap='small')

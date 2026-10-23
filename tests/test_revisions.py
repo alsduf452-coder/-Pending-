@@ -67,7 +67,7 @@ def test_revision_empty_and_ui_restart(tmp_path):
     content=rev_workbook()
     source=tmp_path/'data/default.xlsx';source.write_bytes(content)
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    app.radio(key='main_page').set_value('REV 관리').run()
+    app.button(key='nav_main_page_'+'REV 관리').click().run()
     assert not app.exception
     app.text_area(key='new_rev_text').set_value('새 REV 화면 등록')
     app.text_input(key='new_rev_author').set_value('작성자')
@@ -81,7 +81,7 @@ def test_revision_empty_and_ui_restart(tmp_path):
     next(x for x in app.button if x.label=='REV 수정 저장').click().run()
     assert not app.exception
     again=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
-    again.radio(key='main_page').set_value('REV 관리').run()
+    again.button(key='nav_main_page_'+'REV 관리').click().run()
     assert not again.exception
     assert any('rev-detail-grid' in x.value and '화면 수정 성공' in x.value and '<th scope="row">주요 변경내용</th>' in x.value for x in again.markdown)
     assert len(read_revisions(db,key,original))==2
