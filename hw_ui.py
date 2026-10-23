@@ -293,6 +293,76 @@ def export_buttons(df,name):
     b.download_button('Excel 다운로드',buf.getvalue(),name+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',key=name+'_xlsx')
 
 
+def hw_excel_bytes(path):
+    """H/W 전용 조회용 Excel. 같은 읽기 트랜잭션의 레코드와 변경 이력을 사용합니다."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+    conn=store.connection(path)
+    try:
+        conn.execute('BEGIN')
+        snapshot={kind:[] for kind in store.KINDS}
+        for row in conn.execute('SELECT kind,payload FROM entities ORDER BY rowid'):
+            snapshot[row['kind']].append(json.loads(row['payload']))
+        audit=[dict(row) for row in conn.execute('SELECT * FROM audit ORDER BY timestamp,id')]
+    finally:conn.close()
+    sheets={}
+    def add(name,rows,columns):sheets[name]=pd.DataFrame(rows,columns=columns)
+    def mapped(item,mapping):return {label:item.get(field,'') for field,label in mapping.items()}
+    def serialized(value):return json.dumps(value,ensure_ascii=False) if isinstance(value,(dict,list)) else value
+    eqs=snapshot['equipments'];logs=[r for r in snapshot['workLogs'] if not r.get('deletedAt')]
+    created=datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+    add('내보내기 안내',[['생성 시각',created],['범위','현재 화면 필터와 무관하게 저장된 전체 설비 H/W 데이터'],['단위','측정값은 mils. 0은 실측값, 빈칸은 미측정'],['보관 기록','삭제 보관 작업은 별도 시트. 장착 부품은 활성 작업 이력 계산 기준'],['첨부','첨부파일 목록만 포함하며 파일 본문은 JSON 또는 통합 ZIP 백업에 포함'],['용도','조회용 Excel이며 이 파일로 DB 복원하거나 자동 재등록하지 않습니다. Pending·REV 제외']],['항목','설명'])
+    add('설비 정보',[mapped(r,{'id':'설비 ID','name':'설비명','customer':'고객사'}) for r in eqs],['설비 ID','설비명','고객사'])
+    chambers=[];installed=[]
+    for eq in eqs:
+        for ch in eq['chambers']:
+            chambers.append({'설비':eq['id'],'챔버':ch['chamberId'],'챔버명':ch.get('name',''),'초기 장착 원문':serialized(ch.get('initialParts',{}))})
+            for part in store.installed_parts(eq,ch['chamberId'],logs):
+                installed.append({'설비':eq['id'],'챔버':ch['chamberId'],**mapped(part,{'partType':'부품','sn':'S/N','installedDate':'장착일','lastWorkDate':'최근 작업일','lastWorkLogId':'관련 작업 ID','status':'상태','basis':'계산 근거'})})
+    add('챔버 정보',chambers,['설비','챔버','챔버명','초기 장착 원문'])
+    add('장착 부품',installed,['설비','챔버','부품','S/N','장착일','최근 작업일','관련 작업 ID','상태','계산 근거'])
+    work_map={'id':'작업 ID','equipmentId':'설비','chamberId':'챔버','workDate':'작업일','workTimestamp':'작업 시각','workOrder':'작업 차수','workType':'작업 유형','targetPart':'부품','beforeSn':'교체 전 S/N','afterSn':'교체 후 S/N','reason':'사유','details':'내용','worker':'작업자','issueStatus':'결과','isAmbiguous':'원본 검토 표시','ambiguityReason':'원본 검토 사유','pendingLink':'Pending 연결','source':'원문 출처'}
+    add('작업 교체 이력',[mapped(r,work_map) for r in logs],list(work_map.values()))
+    trash_map={**work_map,'deletedAt':'삭제 시각','deletedBy':'삭제자','deletionReason':'삭제 사유'}
+    add('삭제 보관 작업',[mapped(r,trash_map) for r in snapshot['workLogs'] if r.get('deletedAt')],list(trash_map.values()))
+    base={'id':'측정 ID','equipmentId':'설비','chamberId':'챔버','measuredAt':'측정일','timing':'측정 구분','gaugeTool':'측정기','unit':'단위','relatedWorkLogId':'관련 작업 ID','notes':'비고','isAmbiguous':'원본 검토 표시','source':'원문 출처'}
+    def measurement(r):return {**mapped(r,base),'부품 S/N':r.get('partSnAtMeasurement') or r.get('partSn') or r.get('diffuserSn') or r.get('susceptorSn') or ''}
+    spacing=[]
+    for r in snapshot['spacingMeasurements']:
+        values=r['values'];spacing.append({**measurement(r),**{f'P{i} {SPACING_LABELS[i]}':v for i,v in enumerate(values,1)},**store.spacing_deltas(values)})
+    add('Spacing',spacing,list(base.values())+['부품 S/N']+[f'P{i} {SPACING_LABELS[i]}' for i in range(1,10)]+list(store.spacing_deltas([None]*9)))
+    for kind in ['Diffuser','Susceptor']:
+        rows=[]
+        for r in snapshot['flatnessMeasurements']:
+            if r['type']!=kind:continue
+            rows.append({**measurement(r),'Max−Min':store.flatness_span(r['grid']),'원본 Max−Min':r.get('maxMinSpan'),**{f'R{ri}C{ci}':v for ri,row in enumerate(r['grid'],1) for ci,v in enumerate(row,1)}})
+        add(kind+' Flatness',rows,list(base.values())+['부품 S/N','Max−Min','원본 Max−Min']+[f'R{ri}C{ci}' for ri in range(1,6) for ci in range(1,8)])
+    add('측정 위치 기준',[mapped(r,{'id':'ID','pointIndex':'포인트','label':'위치','description':'설명'}) for r in snapshot['spacingStandards']],['ID','포인트','위치','설명'])
+    add('변경 이력',[mapped(r,{'timestamp':'시각(UTC)','actor':'변경자','action':'작업','kind':'종류','entity_id':'항목 ID','before_json':'변경 전','after_json':'변경 후'}) for r in audit],['시각(UTC)','변경자','작업','종류','항목 ID','변경 전','변경 후'])
+    files=[]
+    for r in snapshot['workLogs']:
+        for a in r.get('attachments') or []:
+            if isinstance(a,dict):files.append({'작업 ID':r['id'],'설비':r['equipmentId'],'챔버':r['chamberId'],'파일명':a.get('name',''),'유형':a.get('type',''),'크기(bytes)':a.get('size',''),'파일 ID':a.get('blobId',''),'원본 경로':a.get('url','')})
+    add('첨부파일 목록',files,['작업 ID','설비','챔버','파일명','유형','크기(bytes)','파일 ID','원본 경로'])
+    buf=BytesIO()
+    with pd.ExcelWriter(buf,engine='openpyxl') as writer:
+        for name,frame in sheets.items():
+            for col in frame.columns:
+                frame[col]=frame[col].map(lambda v:ILLEGAL_CHARACTERS_RE.sub('',str(serialized(v))) if isinstance(v,(str,list,dict)) else v)
+            safe_export(frame).to_excel(writer,sheet_name=name,index=False)
+            ws=writer.sheets[name];ws.freeze_panes='A2';ws.auto_filter.ref=ws.dimensions
+            for cell in ws[1]:
+                cell.fill=PatternFill('solid',fgColor='CBD5E1');cell.font=Font(bold=True,color='172B4D')
+            for row in ws:
+                for cell in row:
+                    cell.alignment=Alignment(vertical='top',wrap_text=True)
+                    cell.border=Border(bottom=Side(style='thin',color='94A3B8'))
+            for column in ws.columns:
+                letter=column[0].column_letter
+                ws.column_dimensions[letter].width=min(48,max(14,max(len(str(c.value or '')) for c in list(column)[:100])+3))
+    return buf.getvalue()
+
+
 def full_backup(data_dir):
     buf=BytesIO()
     with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
@@ -371,6 +441,17 @@ def render_hw(data_dir,context=None):
 </style>""",unsafe_allow_html=True)
     st.header('설비 H/W 이력관리')
     st.caption('로컬 저장 · 기존 Pending·REV 저장소 보존 · Firebase 자동 접속 없음')
+    with st.expander('설비 H/W 전체 Excel 내보내기'):
+        st.caption('저장된 전체 H/W 데이터를 항목별 시트로 내보냅니다. Pending·REV와 첨부파일 본문은 제외합니다.')
+        if st.button('H/W Excel 파일 준비',key='hw_excel_prepare'):
+            try:
+                st.session_state['hw_excel_download']=hw_excel_bytes(path)
+                st.session_state['hw_excel_created']=datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+            except Exception as exc:st.error(f'Excel 생성 실패: {exc}')
+        if st.session_state.get('hw_excel_download'):
+            st.caption('생성 시각: '+st.session_state['hw_excel_created']+' · 이후 수정한 내용은 준비 버튼을 다시 눌러 반영하세요.')
+            st.download_button('H/W Excel 다운로드',st.session_state['hw_excel_download'],'HW_History_'+today().isoformat()+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',key='hw_excel_download_button')
+
     conn=store.connection(path)
     try:sample_import=bool(conn.execute("SELECT 1 FROM imports WHERE mode='sample'").fetchone())
     finally:conn.close()

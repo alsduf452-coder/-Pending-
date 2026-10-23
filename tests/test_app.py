@@ -18,7 +18,7 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 통합 관리' for x in app.title)
-    assert any('HW-13' in x.value for x in app.caption)
+    assert any('HW-14' in x.value for x in app.caption)
     assert app.session_state['main_page']=='Pending 현황'
     assert all(app.button(key='nav_main_page_'+label) for label in ['Pending 현황','REV 관리','설비 H/W 이력관리'])
     app.button(key='nav_main_page_'+'REV 관리').click().run()

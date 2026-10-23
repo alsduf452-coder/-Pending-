@@ -322,3 +322,33 @@ def test_flatness_type_cards_and_comparison_ui(tmp_path):
     assert any(x.value=='Spacing 차이 항목 전후 비교' for x in app.subheader)
     versions_after={kind:[(r['id'],r['_version']) for r in hw.records(db,kind)] for kind in hw.KINDS}
     assert versions_before==versions_after
+
+
+def test_hw_excel_sheets_values_and_archived_work(tmp_path):
+    from openpyxl import load_workbook
+    from hw_ui import hw_excel_bytes
+    db=tmp_path/'hw.sqlite3';data=fixture()
+    data['workLogs'][0]['reason']='=1+1'
+    data['flatnessMeasurements'].append({**data['flatnessMeasurements'][0],'id':'FS1','type':'Susceptor'})
+    hw.import_backup(db,encoded(data),'검토자')
+    book=load_workbook(BytesIO(hw_excel_bytes(db)))
+    assert len(book.sheetnames)==12
+    assert {'Spacing','Diffuser Flatness','Susceptor Flatness','작업 교체 이력','장착 부품','변경 이력'}.issubset(book.sheetnames)
+    def value(sheet,column,row=2):
+        ws=book[sheet];headers=[c.value for c in ws[1]]
+        return ws.cell(row,headers.index(column)+1).value
+    assert value('Spacing','P1 G/V 좌')==0
+    assert value('Spacing','P2 G/V 우') is None
+    assert value('Diffuser Flatness','R1C1')==0
+    assert value('Diffuser Flatness','R1C2') is None
+    assert value('Susceptor Flatness','측정 ID')=='FS1'
+    assert value('작업 교체 이력','사유')=="'=1+1"
+    assert book['Spacing'].freeze_panes=='A2'
+    original=hw.records(db,'workLogs')[0]
+    hw.archive_work(db,'WL1','검토자','중복',original['_version'])
+    book=load_workbook(BytesIO(hw_excel_bytes(db)))
+    assert book['작업 교체 이력'].max_row==1
+    assert book['삭제 보관 작업'].max_row==2
+    assert value('장착 부품','S/N')=='OLD'
+    empty=load_workbook(BytesIO(hw_excel_bytes(tmp_path/'empty.sqlite3')))
+    assert len(empty.sheetnames)==12 and empty['Spacing'].max_row==1
