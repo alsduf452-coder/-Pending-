@@ -6,7 +6,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
 
 APP_NAME='양산 설비 통합 관리'
-APP_VERSION='HW-11'
+APP_VERSION='HW-12'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -49,6 +49,21 @@ st.markdown('''<style>
 .block-container {padding-top:2rem;max-width:1500px}
 [data-testid="stMetric"] {background:#f1f5f9;border:1px solid #e4e9f2;border-radius:14px;padding:20px}
 h1 {letter-spacing:-.7px;font-size:clamp(16px,2.2vw,30px)!important;white-space:nowrap} .sidebar-brand {display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:clamp(10px,1.1vw,14px);font-weight:700;margin:12px 0} .sidebar-brand svg {width:26px;height:26px;flex-shrink:0} div[class*=st-key-kpi_] button p {font-size:28px;font-weight:700} div[class*=st-key-kpi_] button {width:100%;min-height:70px} [data-testid="stSidebar"] {border-right:1px solid #e4e9f2}
+/* 카드형 선택: 기존 라디오의 키보드 조작과 페이지 연결을 유지합니다. */
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) [role="radiogroup"] {gap:7px}
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"] {margin:0!important;padding:9px 12px!important;border:1px solid #94a3b8;border-radius:8px;background:#f1f5f9;outline:none;cursor:pointer;transition:background .15s}
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]>div:first-child {position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]>div:last-child {margin:0;padding:0}
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]:hover {background:#dbeafe;border-color:#2563eb}
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]:has(input:checked) {background:#bfdbfe;border:2px solid #1d4ed8;padding:8px 11px!important;color:#123d80;font-weight:700;box-shadow:0 1px 3px #64748b33}
+:is(.st-key-main_page,.st-key-pending_scope,.st-key-hw_section) label[data-baseweb="radio"]:has(input:focus-visible) {outline:2px solid #0891b2;outline-offset:2px}
+:is(.st-key-main_page,.st-key-pending_scope) label[data-baseweb="radio"] {width:100%;box-sizing:border-box}
+.st-key-pending_kpis [data-testid="stCaptionContainer"] {min-height:22px;line-height:22px;margin:0}
+.st-key-pending_kpis [data-testid="stMetric"] {height:70px;min-height:70px;box-sizing:border-box;padding:8px 16px;border:1px solid #64748b;border-radius:8px;display:flex;flex-direction:column;justify-content:center}
+.st-key-pending_kpis [data-testid="stMetricLabel"] {display:none}
+.st-key-pending_kpis [data-testid="stMetricValue"] {font-size:28px;line-height:1.2;font-weight:700}
+.st-key-pending_kpis [data-testid="stButton"] button {height:70px;min-height:70px;box-sizing:border-box;border-radius:8px}
+.st-key-pending_kpis [data-testid="stButton"] button p {font-size:28px;font-weight:700}
 </style>''',unsafe_allow_html=True)
 
 @st.cache_data(show_spinner=False)
@@ -133,7 +148,7 @@ if page == 'REV 관리':
         st.success('REV를 저장하고 변경 이력을 기록했습니다. 검색 중이면 검색어를 지워 전체 목록을 확인하세요.')
         for input_key in ['new_rev_category','new_rev_text','new_rev_date','new_rev_author','new_rev_notes','new_rev_actor']:
             st.session_state.pop(input_key,None)
-    with st.expander('＋ 새 REV 등록',expanded=True):
+    with st.expander('＋ 새 REV 등록',expanded=False):
         st.caption('원본 Excel은 보존합니다. 신규 REV와 수정 사항은 기존 데이터베이스에 저장되어 재실행 후에도 유지됩니다.')
         with st.form('add_revision',clear_on_submit=False):
             new_rev_no=st.text_input('REV 번호 *',value=suggest_revision(revisions),key=f'new_rev_no_{len(revisions)}',max_chars=6)
@@ -303,13 +318,16 @@ if question:
     view=filter_pending(view,view['설비'].unique(),view['분야'].unique(),view['상태'].unique(),question_terms)
     st.caption(f'질문 해석: 설비 {asked_eq or "전체"} / 상태 {asked_state or "전체"} / 키워드 {question_terms or "없음"} · 사이드바 조건과 함께 적용')
 total=len(view); done=int((view['상태']=='완료').sum())
-kpi_total,kpi_done,kpi_open,kpi_rate=st.columns(4)
-kpi_total.metric('전체 건수',f'{total:,}')
-kpi_done.caption('완료 · 숫자를 누르면 목록 조회')
-kpi_done.button(f'{done:,}',key='kpi_done',on_click=select_count,kwargs={'state':'완료'},use_container_width=True)
-kpi_open.caption('미완료 · 숫자를 누르면 목록 조회')
-kpi_open.button(f'{total-done:,}',key='kpi_open',on_click=select_count,kwargs={'state':'미완료'},use_container_width=True)
-kpi_rate.metric('완료율',f'{done/total*100 if total else 0:.1f}%')
+with st.container(key='pending_kpis'):
+    kpi_total,kpi_done,kpi_open,kpi_rate=st.columns(4)
+    kpi_total.caption('전체 건수')
+    kpi_total.metric('전체 건수',f'{total:,}')
+    kpi_done.caption('완료 · 숫자를 누르면 목록 조회')
+    kpi_done.button(f'{done:,}',key='kpi_done',on_click=select_count,kwargs={'state':'완료'},use_container_width=True)
+    kpi_open.caption('미완료 · 숫자를 누르면 목록 조회')
+    kpi_open.button(f'{total-done:,}',key='kpi_open',on_click=select_count,kwargs={'state':'미완료'},use_container_width=True)
+    kpi_rate.caption('완료율')
+    kpi_rate.metric('완료율',f'{done/total*100 if total else 0:.1f}%')
 st.caption('현재 필터 기준 · 완료율 = 완료 ÷ 전체')
 with st.expander('집계 및 완료 판정 기준'):
     st.write('완료는 상태 O/○/완료만 인정합니다. 고객사 요청 상단 표는 H/I 두 값이 모두 완료일 때 완료이며, 39행 이후 표는 J열을 사용합니다. 완료로 명시되지 않은 항목과 공란은 모두 미완료로 분류합니다.')

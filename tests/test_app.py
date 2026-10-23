@@ -18,7 +18,7 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 통합 관리' for x in app.title)
-    assert any('HW-11' in x.value for x in app.caption)
+    assert any('HW-12' in x.value for x in app.caption)
     assert app.sidebar.radio(key='main_page').value=='Pending 현황'
     assert app.radio(key='main_page').options==['Pending 현황','REV 관리','설비 H/W 이력관리']
     app.radio(key='main_page').set_value('REV 관리').run()
