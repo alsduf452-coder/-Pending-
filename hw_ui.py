@@ -293,6 +293,83 @@ def export_buttons(df,name):
     b.download_button('Excel 다운로드',buf.getvalue(),name+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',key=name+'_xlsx')
 
 
+def format_hw_workbook(content):
+    """기존 내보내기도 같은 3×3/5×7 비교표로 변환합니다."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    book=load_workbook(BytesIO(content))
+    if '챔버 정보' in book.sheetnames:del book['챔버 정보']
+    for name,remove in [('장착 부품',{'관련 작업 ID','상태','계산 근거'}),('작업 교체 이력',{'원문 출처'}),('삭제 보관 작업',{'원문 출처'})]:
+        if name not in book.sheetnames:continue
+        ws=book[name]
+        for col in range(ws.max_column,0,-1):
+            if ws.cell(1,col).value in remove:ws.delete_cols(col)
+        ws.auto_filter.ref=ws.dimensions
+        for col in range(1,ws.max_column+1):
+            title=ws.cell(1,col).value
+            ws.column_dimensions[get_column_letter(col)].width=28 if title in ['S/N','교체 전 S/N','교체 후 S/N'] else 20
+        ws.sheet_properties.pageSetUpPr.fitToPage=True
+        ws.page_setup.orientation='landscape';ws.page_setup.fitToWidth=1;ws.page_setup.fitToHeight=0
+    edge=Side(style='thin',color='94A3B8')
+    def cell(ws,r,c,value,header=False):
+        out=ws.cell(r,c,value)
+        out.alignment=Alignment(horizontal='center' if header or isinstance(value,(int,float)) else 'left',vertical='center',wrap_text=True)
+        out.border=Border(left=edge,right=edge,top=edge,bottom=edge)
+        out.fill=PatternFill('solid',fgColor='CBD5E1' if header else 'F1F5F9')
+        out.font=Font(name='맑은 고딕',size=11,bold=header,color='172B4D')
+        if isinstance(value,str):out.data_type='s'
+        return out
+    for name in ['Spacing','Diffuser Flatness','Susceptor Flatness']:
+        if name not in book.sheetnames:continue
+        original=book[name];headers=[c.value for c in original[1]]
+        records=[dict(zip(headers,row)) for row in original.iter_rows(min_row=2,values_only=True)]
+        idx=book.sheetnames.index(name);del book[name];ws=book.create_sheet(name,idx)
+        spacing=name=='Spacing';width=3 if spacing else 7;groups={}
+        for r in records:groups.setdefault((r.get('설비'),r.get('챔버')),[]).append(r)
+        ws.cell(1,1,name+' 실측 비교표 · 단위 mils · 0은 실측값 / 빈칸은 미측정')
+        ws.cell(2,1,'같은 설비·챔버의 측정 기록을 오른쪽 열 방향으로 나란히 표시합니다.')
+        ws.column_dimensions['A'].width=16
+        base=4
+        for (eq,ch),items in groups.items():
+            ws.cell(base,1,f'{eq} / {ch}').font=Font(bold=True,size=13,color='173C72')
+            for n,record in enumerate(items):
+                start=2+n*(width+1)
+                for c in range(start,start+width):ws.column_dimensions[get_column_letter(c)].width=15
+                ws.column_dimensions[get_column_letter(start+width)].width=3
+                metadata=['측정 ID','측정일','측정 구분','부품 S/N','측정기','비고']
+                for offset,label in enumerate(metadata,1):
+                    cell(ws,base+offset,1,label,True)
+                    ws.merge_cells(start_row=base+offset,start_column=start,end_row=base+offset,end_column=start+width-1)
+                    cell(ws,base+offset,start,record.get(label))
+                    ws.row_dimensions[base+offset].height=42 if label=='비고' else 24
+                top=base+8
+                for ci in range(width):cell(ws,top,start+ci,(['좌','중앙','우'][ci] if spacing else f'Col {ci+1}'),True)
+                matrix=store.POINT_LAYOUT if spacing else [[None]*7 for _ in range(5)]
+                for ri,row in enumerate(matrix):
+                    cell(ws,top+1+ri,1,(['G/V 측','중앙','Window 측'][ri] if spacing else f'Row {ri+1}'),True)
+                    ws.row_dimensions[top+1+ri].height=34
+                    for ci,point in enumerate(row):
+                        key=f'P{point} {SPACING_LABELS[point]}' if spacing else f'R{ri+1}C{ci+1}'
+                        cell(ws,top+1+ri,start+ci,record.get(key))
+                summary=top+2+len(matrix)
+                keys=list(store.spacing_deltas([None]*9)) if spacing else ['Max−Min','원본 Max−Min']
+                for offset,key in enumerate(keys):
+                    cell(ws,summary+offset,1,key,True)
+                    ws.merge_cells(start_row=summary+offset,start_column=start,end_row=summary+offset,end_column=start+width-1)
+                    cell(ws,summary+offset,start,record.get(key))
+            base+=24
+        if not records:ws.cell(4,1,'등록된 측정 데이터 없음')
+        ws.freeze_panes='B4';ws.sheet_view.showGridLines=False
+        ws.sheet_properties.pageSetUpPr.fitToPage=True
+        ws.page_setup.orientation='landscape';ws.page_setup.paperSize=ws.PAPERSIZE_A3
+        ws.page_setup.fitToWidth=0;ws.page_setup.fitToHeight=0
+        ws.print_title_rows='1:2'
+    if '내보내기 안내' in book.sheetnames:
+        ws=book['내보내기 안내'];ws.append(['측정표 배치','같은 설비·챔버별 기록을 열 방향으로 비교. Spacing 3×3 / Flatness 5×7.'])
+    out=BytesIO();book.save(out);return out.getvalue()
+
+
 def hw_excel_bytes(path):
     """H/W 전용 조회용 Excel. 같은 읽기 트랜잭션의 레코드와 변경 이력을 사용합니다."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -360,7 +437,7 @@ def hw_excel_bytes(path):
             for column in ws.columns:
                 letter=column[0].column_letter
                 ws.column_dimensions[letter].width=min(48,max(14,max(len(str(c.value or '')) for c in list(column)[:100])+3))
-    return buf.getvalue()
+    return format_hw_workbook(buf.getvalue())
 
 
 def full_backup(data_dir):
@@ -422,9 +499,10 @@ def render_hw(data_dir,context=None):
     path=data_dir/'hw_history.sqlite3'
     st.markdown("""<style>
 .hw-parts-scroll {overflow:auto;border:1px solid #94a3b8;border-radius:8px;margin-bottom:16px}
-.hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:900px;font-size:13px}
+.hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:620px;table-layout:fixed;font-size:13px}
 .hw-parts-table th {background:#cbd5e1;text-align:left;padding:10px;border:1px solid #94a3b8}
-.hw-parts-table td {padding:10px;border:1px solid #b6c4d5}
+.hw-parts-table th:nth-child(1) {width:19%}.hw-parts-table th:nth-child(2) {width:27%}.hw-parts-table th:nth-child(3),.hw-parts-table th:nth-child(4) {width:20%}.hw-parts-table th:nth-child(5) {width:14%}
+.hw-parts-table td {overflow-wrap:anywhere;padding:10px;border:1px solid #b6c4d5}
 .hw-work-badges {display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-height:30px}
 .hw-work-badges span {background:#dbeafe;border:1px solid #94a3b8;color:#173c72;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
 .hw-work-badges .hw-work-date {background:transparent;border:0;padding-left:0;color:#075985}
@@ -542,12 +620,12 @@ def render_hw(data_dir,context=None):
 def installed_table(parts):
     from html import escape
     rows=[]
-    headers=['부품','S/N','장착일','최근 변경일','경과','상태','산출 근거','관련 작업']
+    headers=['부품','S/N','장착일','최근 변경일','경과']
     for p in parts:
         recent=p.get('lastWorkDate') or p.get('installedDate','')
         age=store.installation_age(recent,p['partType'],today())
         installed_age=store.installation_age(p.get('installedDate',''),p['partType'],today())
-        cells=[p['partType'],p.get('sn',''),p.get('installedDate',''),recent,age['label'],p.get('status',''),p.get('basis',''),p.get('lastWorkLogId','')]
+        cells=[p['partType'],p.get('sn',''),p.get('installedDate',''),recent,age['label']]
         rows.append('<tr>'+''.join(f'<td style="{installed_age["style"] if i==2 else age["style"] if i in [3,4] else ""}">'+escape(str(v))+'</td>' for i,v in enumerate(cells))+'</tr>')
     st.markdown('<div class="hw-parts-scroll"><table class="hw-parts-table"><thead><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>',unsafe_allow_html=True)
 

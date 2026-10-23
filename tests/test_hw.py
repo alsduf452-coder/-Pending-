@@ -332,18 +332,21 @@ def test_hw_excel_sheets_values_and_archived_work(tmp_path):
     data['flatnessMeasurements'].append({**data['flatnessMeasurements'][0],'id':'FS1','type':'Susceptor'})
     hw.import_backup(db,encoded(data),'검토자')
     book=load_workbook(BytesIO(hw_excel_bytes(db)))
-    assert len(book.sheetnames)==12
+    assert len(book.sheetnames)==11
     assert {'Spacing','Diffuser Flatness','Susceptor Flatness','작업 교체 이력','장착 부품','변경 이력'}.issubset(book.sheetnames)
     def value(sheet,column,row=2):
         ws=book[sheet];headers=[c.value for c in ws[1]]
         return ws.cell(row,headers.index(column)+1).value
-    assert value('Spacing','P1 G/V 좌')==0
-    assert value('Spacing','P2 G/V 우') is None
-    assert value('Diffuser Flatness','R1C1')==0
-    assert value('Diffuser Flatness','R1C2') is None
-    assert value('Susceptor Flatness','측정 ID')=='FS1'
+    assert book['Spacing']['B13'].value==0
+    assert book['Spacing']['D13'].value is None
+    assert book['Diffuser Flatness']['B13'].value==0
+    assert book['Diffuser Flatness']['C13'].value is None
+    assert book['Susceptor Flatness']['B5'].value=='FS1'
     assert value('작업 교체 이력','사유')=="'=1+1"
-    assert book['Spacing'].freeze_panes=='A2'
+    assert book['Spacing'].freeze_panes=='B4'
+    assert '챔버 정보' not in book.sheetnames
+    assert not {'관련 작업 ID','상태','계산 근거'} & {c.value for c in book['장착 부품'][1]}
+    assert '원문 출처' not in {c.value for c in book['작업 교체 이력'][1]}
     original=hw.records(db,'workLogs')[0]
     hw.archive_work(db,'WL1','검토자','중복',original['_version'])
     book=load_workbook(BytesIO(hw_excel_bytes(db)))
@@ -351,4 +354,4 @@ def test_hw_excel_sheets_values_and_archived_work(tmp_path):
     assert book['삭제 보관 작업'].max_row==2
     assert value('장착 부품','S/N')=='OLD'
     empty=load_workbook(BytesIO(hw_excel_bytes(tmp_path/'empty.sqlite3')))
-    assert len(empty.sheetnames)==12 and empty['Spacing'].max_row==1
+    assert len(empty.sheetnames)==11 and empty['Spacing']['A4'].value=='등록된 측정 데이터 없음'
