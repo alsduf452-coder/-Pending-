@@ -604,6 +604,18 @@ def data_management(path,data_dir):
 
 def render_hw(data_dir,context=None):
     path=data_dir/'hw_history.sqlite3'
+    correction_file=data_dir/'measurement_correction.json'
+    if correction_file.exists():
+        try:
+            result=store.apply_measurement_correction(path,correction_file.read_bytes())
+            if result['status']=='applied':
+                st.session_state.pop('hw_excel_download',None)
+                st.session_state.pop('hw_excel_created',None)
+                st.success(f"{result['equipmentId']} {result['type']} 보정 완료 · 수정 {result['updated']}건 / 추가 {result['added']}건. 기존 DB 백업과 변경 이력을 보존했습니다.")
+            elif result['status']=='waiting_for_equipment':
+                st.info(f"보정 대상 {result['equipmentId']}가 없습니다. 기존 H/W 데이터를 가져온 뒤 다시 열면 적용됩니다.")
+        except Exception as exc:st.error(f'측정 보정 파일을 적용하지 못했습니다. 기존 데이터는 유지됩니다: {exc}')
+
     st.markdown("""<style>
 .hw-parts-scroll {overflow:auto;border:1px solid #94a3b8;border-radius:8px;margin-bottom:16px}
 .hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:650px;table-layout:fixed;font-size:12px}

@@ -500,3 +500,78 @@ def test_45_flatness_editor_backup_overwrite_restart(tmp_path):
     assert any('DB 저장 버전: 2' in x.value for x in restarted.caption)
     assert any('flatness-values' in x.value and '>-45<' in x.value for x in restarted.markdown)
     assert hw.records(restored_db,'flatnessMeasurements')[0]['grid'][0][:2]==[-45,0]
+
+
+def correction_fixture():
+    data=fixture()
+    data['equipments'][0]['id']='A4CVD45I'
+    for kind in ['workLogs','spacingMeasurements','flatnessMeasurements']:
+        for r in data[kind]:r['equipmentId']='A4CVD45I'
+    item={**deepcopy(data['flatnessMeasurements'][0]),'measuredAt':'2026-01-02','partSn':'SYNTHETIC-PART','diffuserSn':'SYNTHETIC-PART','originalOrder':1,'notes':'합성 테스트','grid':[[-7,0,None,2,3,4,5]]*5}
+    patch={'format':'hw-measurement-correction-v1','patchId':'synthetic-correction-1','equipmentId':'A4CVD45I','type':'Diffuser','records':[item]}
+    return data,patch
+
+
+def test_measurement_correction_scoped_backup_once_and_json_restore(tmp_path):
+    data,patch=correction_fixture()
+    data['equipments'].append({**deepcopy(data['equipments'][0]),'id':'A4CVD15I'})
+    data['flatnessMeasurements'].extend([{**deepcopy(data['flatnessMeasurements'][0]),'id':'FL15','equipmentId':'A4CVD15I'},{**deepcopy(data['flatnessMeasurements'][0]),'id':'SUS1','type':'Susceptor'}])
+    patch['records'].append({**deepcopy(patch['records'][0]),'id':'NEW','measuredAt':'2026-02-01','originalOrder':2})
+    db=tmp_path/'hw.sqlite3';hw.import_backup(db,encoded(data),'준비')
+    before={(k,r['id']):hw.snapshot_record(r) for k in hw.KINDS for r in hw.records(db,k)}
+    result=hw.apply_measurement_correction(db,encoded(patch))
+    assert result['updated']==1 and result['added']==1
+    backup=Path(result['backup'])
+    assert backup.exists() and hw.records(backup,'flatnessMeasurements')[0]['grid']==data['flatnessMeasurements'][0]['grid']
+    active={r['id']:r for r in hw.records(db,'flatnessMeasurements')}
+    assert active['FL1']['grid'][0][:3]==[-7,0,None]
+    assert active['FL1']['gridRows'][0]['cells']==active['FL1']['grid'][0]
+    assert json.loads(active['FL1']['gridJson'])==active['FL1']['grid']
+    for kind in hw.KINDS:
+        for r in hw.records(db,kind):
+            if kind=='flatnessMeasurements' and r['id'] in ['FL1','NEW']:continue
+            assert hw.snapshot_record(r)==before[(kind,r['id'])]
+    value=active['FL1'];value['grid'][0][0]=-9
+    hw.save_record(db,'flatnessMeasurements',value,'후속 수정',value['_version'])
+    assert hw.apply_measurement_correction(db,encoded(patch))['status']=='already_applied'
+    assert next(r for r in hw.records(db,'flatnessMeasurements') if r['id']=='FL1')['grid'][0][0]==-9
+    restored=tmp_path/'restored.sqlite3';hw.import_backup(restored,hw.backup_bytes(db),'복원')
+    assert hw.apply_measurement_correction(restored,encoded(patch))['status']=='already_applied'
+    assert next(r for r in hw.records(restored,'flatnessMeasurements') if r['id']=='FL1')['grid'][0][0]==-9
+    assert len(list((tmp_path/'backups').glob('*.sqlite3')))==1
+
+
+def test_measurement_correction_atomic_wrong_scope(tmp_path):
+    data,patch=correction_fixture()
+    data['equipments'].append({**deepcopy(data['equipments'][0]),'id':'A4CVD15I'})
+    data['flatnessMeasurements'].append({**deepcopy(data['flatnessMeasurements'][0]),'id':'OTHER','equipmentId':'A4CVD15I'})
+    patch['records'].append({**deepcopy(patch['records'][0]),'id':'OTHER'})
+    db=tmp_path/'hw.sqlite3';hw.import_backup(db,encoded(data),'준비')
+    before=hw.records(db,'flatnessMeasurements')
+    with pytest.raises(ValueError,match='보정 범위'):hw.apply_measurement_correction(db,encoded(patch))
+    assert hw.records(db,'flatnessMeasurements')==before
+    assert not any(r['action']=='CORRECT_MEASUREMENT' for r in hw.audit_records(db))
+
+
+def test_measurement_correction_waits_for_equipment(tmp_path):
+    data,patch=correction_fixture();db=tmp_path/'hw.sqlite3'
+    assert hw.apply_measurement_correction(db,encoded(patch))['status']=='waiting_for_equipment'
+    hw.import_backup(db,encoded(data),'준비')
+    assert hw.apply_measurement_correction(db,encoded(patch))['status']=='applied'
+
+
+def test_local_correction_applies_on_hw_open_and_survives_rerun(tmp_path):
+    db=setup_ui(tmp_path);data,patch=correction_fixture()
+    hw.import_backup(db,encoded(data),'준비')
+    (tmp_path/'data/measurement_correction.json').write_bytes(encoded(patch))
+    app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
+    app.button(key='nav_main_page_설비 H/W 이력관리').click().run()
+    assert not app.exception and any('보정 완료' in x.value for x in app.success)
+    app.button(key='nav_hw_section_Flatness').click().run()
+    app.selectbox(key='hw_chamber_A4CVD45I').set_value('Chamber A').run()
+    assert not app.exception
+    assert any('DB 저장 버전: 2' in x.value for x in app.caption)
+    assert any('flatness-values' in x.value and '>-7<' in x.value for x in app.markdown)
+    before=hw.records(db,'flatnessMeasurements')
+    app.run()
+    assert not app.exception and hw.records(db,'flatnessMeasurements')==before

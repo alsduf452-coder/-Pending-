@@ -24,7 +24,8 @@ def connection(path):
     conn.executescript('''CREATE TABLE IF NOT EXISTS entities (kind TEXT, id TEXT, payload TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY(kind,id));
     CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, kind TEXT NOT NULL, entity_id TEXT NOT NULL, before_json TEXT, after_json TEXT);
     CREATE TABLE IF NOT EXISTS blobs (id TEXT PRIMARY KEY, name TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL);
-    CREATE TABLE IF NOT EXISTS imports (digest TEXT PRIMARY KEY, imported_at TEXT NOT NULL, actor TEXT NOT NULL, mode TEXT NOT NULL);''')
+    CREATE TABLE IF NOT EXISTS imports (digest TEXT PRIMARY KEY, imported_at TEXT NOT NULL, actor TEXT NOT NULL, mode TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS measurement_corrections (digest TEXT PRIMARY KEY, patch_id TEXT NOT NULL, applied_at TEXT NOT NULL, actor TEXT NOT NULL, backup_path TEXT NOT NULL);''')
     return conn
 
 
@@ -165,6 +166,16 @@ def import_backup(path,content,actor,allow_partial=False):
                     conn.execute('INSERT OR IGNORE INTO blobs VALUES (?,?,?,?)',(blob['id'],blob['name'],blob['mime'],raw))
                 for a in plan['data'].get('audit',[]):
                     conn.execute('INSERT OR IGNORE INTO audit VALUES (?,?,?,?,?,?,?,?)',tuple(a[k] for k in ['id','timestamp','actor','action','kind','entity_id','before_json','after_json']))
+            if plan['native'] and plan['data'].get('measurementCorrections'):
+                # 현재 측정값이 백업과 일치할 때만 적용 완료 표시를 복원합니다.
+                matching=bool(plan['records']['flatnessMeasurements'])
+                for item in plan['records']['flatnessMeasurements']:
+                    active=conn.execute("SELECT payload FROM entities WHERE kind='flatnessMeasurements' AND id=?",(item['id'],)).fetchone()
+                    if not active or json.loads(active['payload'])!=item:matching=False;break
+                if matching:
+                    for marker in plan['data']['measurementCorrections']:
+                        if not isinstance(marker,dict) or not re.fullmatch('[0-9a-f]{64}',str(marker.get('digest',''))):raise ValueError('보정 적용 이력 형식이 잘못됐습니다.')
+                        conn.execute('INSERT OR IGNORE INTO measurement_corrections VALUES (?,?,?,?,?)',tuple(marker[k] for k in ['digest','patch_id','applied_at','actor','backup_path']))
             conn.execute('INSERT OR IGNORE INTO imports VALUES (?,?,?,?)',(plan['digest'],now(),actor,plan['mode']))
             return {'added':added,'skipped':skipped,'errors':len(plan['errors'])}
     finally:conn.close()
@@ -237,6 +248,7 @@ def backup_bytes(path):
         data['audit']=[dict(r) for r in conn.execute('SELECT * FROM audit')]
         for r in conn.execute('SELECT * FROM blobs'):
             data['blobs'].append({**dict(r),'data':base64.b64encode(r['data']).decode()})
+        data['measurementCorrections']=[dict(r) for r in conn.execute('SELECT * FROM measurement_corrections')]
         return json.dumps(data,ensure_ascii=False,allow_nan=False).encode('utf-8')
     finally:conn.close()
 
@@ -364,3 +376,78 @@ def compare_measurements(before,after,kind):
         da=spacing_deltas(before['values']);db=spacing_deltas(after['values'])
         result['spacing_deltas']=[{'차이 항목':key,'A(mils)':da[key],'B(mils)':db[key],'변화 B−A(mils)':round(db[key]-da[key],6) if da[key] is not None and db[key] is not None else None} for key in da]
     return result
+
+
+
+def apply_measurement_correction(path, content, actor='사용자 제공 측정자료 보정'):
+    """로컬 보정 파일을 한 번만 적용합니다. 원본 DB 백업·변경 이력을 보존합니다."""
+    if len(content)>5*1024*1024:raise ValueError('측정 보정 파일은 5MB 이하여야 합니다.')
+    patch=json.loads(content.decode('utf-8-sig'))
+    if not isinstance(patch,dict) or patch.get('format')!='hw-measurement-correction-v1':raise ValueError('지원하지 않는 측정 보정 형식입니다.')
+    equipment_id=patch.get('equipmentId');part_type=patch.get('type');patch_id=patch.get('patchId')
+    items=patch.get('records')
+    if not isinstance(equipment_id,str) or not equipment_id or part_type not in ['Diffuser','Susceptor'] or not isinstance(patch_id,str) or not patch_id:raise ValueError('보정 대상 설비·종류·번호를 확인해주세요.')
+    if not isinstance(items,list) or not items or len(items)>2000:raise ValueError('보정 측정 목록이 없거나 너무 큽니다.')
+    ids=set()
+    for r in items:
+        if not isinstance(r,dict) or not isinstance(r.get('id'),str) or not r['id'] or r['id'] in ids:raise ValueError('보정 ID가 없거나 중복됩니다.')
+        ids.add(r['id'])
+        if r.get('equipmentId')!=equipment_id or r.get('type')!=part_type:raise ValueError('보정 파일의 설비·종류 범위가 일치하지 않습니다.')
+        if not numeric_grid(r.get('grid'),5,7) or r.get('unit')!='mils' or not good_date(r.get('measuredAt')):raise ValueError('보정 측정일·단위·5×7 수치를 확인해주세요.')
+    digest=hashlib.sha256(content).hexdigest();path=Path(path);conn=connection(path)
+    try:
+        conn.execute('CREATE TABLE IF NOT EXISTS measurement_corrections (digest TEXT PRIMARY KEY, patch_id TEXT NOT NULL, applied_at TEXT NOT NULL, actor TEXT NOT NULL, backup_path TEXT NOT NULL)')
+        conn.commit()
+        marker=conn.execute('SELECT backup_path FROM measurement_corrections WHERE digest=?',(digest,)).fetchone()
+        if marker:return {'status':'already_applied','updated':0,'added':0,'backup':marker['backup_path']}
+        if not conn.execute("SELECT 1 FROM entities WHERE kind='equipments' AND id=?",(equipment_id,)).fetchone():
+            return {'status':'waiting_for_equipment','updated':0,'added':0,'equipmentId':equipment_id}
+        backup_dir=path.parent/'backups';backup_dir.mkdir(exist_ok=True)
+        stamp=datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')
+        backup_path=backup_dir/f'before_measurement_correction_{stamp}_{digest[:12]}.sqlite3'
+        dest=sqlite3.connect(backup_path)
+        try:conn.backup(dest)
+        finally:dest.close()
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if conn.execute('SELECT 1 FROM measurement_corrections WHERE digest=?',(digest,)).fetchone():
+                return {'status':'already_applied','updated':0,'added':0,'backup':str(backup_path)}
+            equipment_map={r['id']:json.loads(r['payload']) for r in conn.execute("SELECT id,payload FROM entities WHERE kind='equipments'")}
+            work_ids={r['id']:json.loads(r['payload']) for r in conn.execute("SELECT id,payload FROM entities WHERE kind='workLogs'")}
+            existing={r['id']:r for r in conn.execute("SELECT * FROM entities WHERE kind='flatnessMeasurements'")}
+            used=set();updated=0;added=0
+            fields=['measuredAt','grid','unit','partSn','partSnAtMeasurement','diffuserSn','susceptorSn','notes','timing','originalOrder']
+            for source in items:
+                identifier=source['id'];old=existing.get(identifier)
+                if old is None:
+                    candidates=[]
+                    for candidate_id,row in existing.items():
+                        value=json.loads(row['payload'])
+                        if candidate_id not in used and value.get('equipmentId')==equipment_id and value.get('type')==part_type and value.get('chamberId')==source['chamberId'] and value.get('measuredAt')==source['measuredAt'] and (value.get('partSnAtMeasurement') or value.get('partSn') or value.get('diffuserSn'))==source.get('partSn'):
+                            candidates.append(row)
+                    if len(candidates)>1:
+                        candidates=[row for row in candidates if json.loads(row['payload']).get('originalOrder')==source.get('originalOrder')]
+                        if len(candidates)!=1:raise ValueError('동일 날짜·부품의 측정이 여러 건이라 자동 연결할 수 없습니다: '+identifier)
+                    if candidates:old=candidates[0];identifier=old['id']
+                if identifier in used:raise ValueError('여러 보정 기록이 같은 기존 기록에 연결됩니다.')
+                used.add(identifier)
+                previous=json.loads(old['payload']) if old else {}
+                if old and (previous.get('equipmentId')!=equipment_id or previous.get('type')!=part_type or previous.get('chamberId')!=source['chamberId'] or previous.get('deletedAt')):
+                    raise ValueError('기존 측정의 설비·챔버·종류 또는 삭제 상태가 보정 범위와 다릅니다: '+identifier)
+                item={**previous,'id':identifier,'equipmentId':equipment_id,'chamberId':source['chamberId'],'type':part_type}
+                for field in fields:
+                    if field in source:item[field]=source[field]
+                item.update(rows=5,cols=7,maxMinSpan=flatness_span(item['grid']),gridRows=[{'cells':row} for row in item['grid']],gridJson=json.dumps(item['grid'],allow_nan=False))
+                item['correctionSource']={'patchId':patch_id,'sourceFile':patch.get('sourceFile',''),'sourceSha256':patch.get('sourceSha256','')}
+                reason=validate_record('flatnessMeasurements',item,equipment_map,work_ids,allow_incomplete=True)
+                if reason:raise ValueError(reason)
+                payload=json.dumps(item,ensure_ascii=False,allow_nan=False)
+                if old and item==previous:continue
+                version=old['version']+1 if old else 1
+                conn.execute("INSERT INTO entities VALUES ('flatnessMeasurements',?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,version=excluded.version",(identifier,payload,version))
+                conn.execute('INSERT INTO audit VALUES (?,?,?,?,?,?,?,?)',(uuid4().hex,now(),actor,'CORRECT_MEASUREMENT','flatnessMeasurements',identifier,old['payload'] if old else '',payload))
+                if old:updated+=1
+                else:added+=1
+            conn.execute('INSERT INTO measurement_corrections VALUES (?,?,?,?,?)',(digest,patch_id,now(),actor,str(backup_path.resolve())))
+            return {'status':'applied','updated':updated,'added':added,'backup':str(backup_path.resolve()),'equipmentId':equipment_id,'type':part_type}
+    finally:conn.close()
