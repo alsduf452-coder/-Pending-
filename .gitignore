@@ -1,0 +1,13 @@
+work/
+.venv/
+__pycache__/
+.pytest_cache/
+data/*.xlsx
+!data/.gitkeep
+
+data/*.sqlite3
+data/*.sqlite3-*
+
+.venv312/
+data/*.json
+data/*.zip
