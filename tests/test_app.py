@@ -18,7 +18,7 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 통합 관리' for x in app.title)
-    assert any('HW-23' in x.value for x in app.caption)
+    assert any('HW-24' in x.value for x in app.caption)
     assert app.session_state['main_page']=='PENDING 현황'
     assert [x.label for x in app.sidebar.button if x.key and x.key.startswith('nav_main_page_')]==['PENDING 현황','PENDING List REV관리','설비 H/W 이력관리']
     if not app.metric:app.radio(key='data_mode').set_value('샘플 데이터').run()
