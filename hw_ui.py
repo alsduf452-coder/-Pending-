@@ -186,6 +186,62 @@ def measurement_form(path,kind,equipment,chambers,logs,current=None,default_type
             except Exception as exc:st.error(f'저장 실패: {exc}')
 
 
+def measurement_summary_data(records,equipment,chambers,kind,flatness_type=None,year=None):
+    """전체 화면용 최신 요약과 월별 건수. 측정값 수정은 건수를 늘리지 않습니다."""
+    spacing=kind=='spacingMeasurements'
+    rows=[r for r in records if r.get('equipmentId')==equipment and r.get('chamberId') in chambers and not r.get('deletedAt') and (spacing or r.get('type')==flatness_type)]
+    summaries=[]
+    monthly=[{'월':m,**{ch:0 for ch in chambers}} for m in range(1,13)]
+    for ch in chambers:
+        scoped=[r for r in rows if r['chamberId']==ch]
+        row={'챔버':ch,'최신 측정일':'측정 기록 없음'}
+        metrics={'Center 값':None} if spacing else {'최솟값':None,'최댓값':None}
+        row.update({**metrics,'Max−Min':None,'측정 개수':'—'})
+        if scoped:
+            latest=max(scoped,key=lambda r:(r['measuredAt'],r.get('originalOrder') or 0,r['id']))
+            grid=[latest['values']] if spacing else latest['grid']
+            stats=measurement_stats(grid)
+            row['최신 측정일']=latest['measuredAt']
+            if spacing:row['Center 값']=latest['values'][4]
+            else:row.update({'최솟값':stats['최소값'],'최댓값':stats['최댓값']})
+            row['Max−Min']=stats['Max−Min'];row['측정 개수']=f"{stats['측정 수']}/{9 if spacing else 35}"
+        summaries.append(row)
+    for r in rows:
+        if not store.good_date(r.get('measuredAt')):continue
+        if year is not None and int(r['measuredAt'][:4])==year:
+            monthly[int(r['measuredAt'][5:7])-1][r['chamberId']]+=1
+    return summaries,monthly
+
+
+def measurement_overview(rows,kind,equipment,chambers,flatness_type=None):
+    st.subheader('챔버별 최신 측정 요약')
+    label='Spacing' if kind=='spacingMeasurements' else f'{flatness_type} Flatness'
+    st.caption(f'{label} · 각 챔버의 전체 기간 최신 기록 · 단위: mils · —는 미측정이며 0은 실측값입니다.')
+    summary,_=measurement_summary_data(rows,equipment,chambers,kind,flatness_type)
+    display=pd.DataFrame(summary)
+    for column in ['Center 값','최솟값','최댓값','Max−Min']:
+        if column in display:
+            display[column]=display[column].map(lambda value:'—' if pd.isna(value) else measurement_number(value))
+    table(display.to_dict('records'))
+    st.subheader('월별 측정 횟수')
+    scoped=[r for r in rows if r.get('equipmentId')==equipment and r.get('chamberId') in chambers and not r.get('deletedAt') and (kind=='spacingMeasurements' or r.get('type')==flatness_type)]
+    recorded_years={int(r['measuredAt'][:4]) for r in scoped if store.good_date(r.get('measuredAt'))}
+    years=sorted(recorded_years|{today().year},reverse=True)
+    latest_year=max(recorded_years) if recorded_years else today().year
+    year=st.selectbox('측정 집계 연도',years,index=years.index(latest_year),key=f'measurement_year_{kind}_{equipment}_{flatness_type or "Spacing"}')
+    _,monthly=measurement_summary_data(scoped,equipment,chambers,kind,flatness_type,year)
+    peak=max(sum(r[ch] for ch in chambers) for r in monthly)
+    colors=['#2563eb','#0d9488','#d97706','#7c3aed','#db2777']
+    fig=go.Figure()
+    for i,ch in enumerate(chambers):
+        fig.add_bar(name=ch,x=list(range(1,13)),y=[r[ch] for r in monthly],marker_color=colors[i%len(colors)])
+    fig.update_layout(height=260,barmode='stack',margin=dict(l=0,r=0,t=10,b=0),legend=dict(orientation='h',y=1.15),xaxis=dict(title=None,tickmode='array',tickvals=list(range(1,13)),ticktext=[f'{m}월' for m in range(1,13)]),yaxis=dict(title='측정 횟수',dtick=1,range=[0,max(1,peak)*1.2]),paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig,use_container_width=True,key=f'measurement_monthly_{kind}_{equipment}_{flatness_type or "Spacing"}')
+    count=sum(r[ch] for r in monthly for ch in chambers)
+    st.caption(f'{year}년 · {label} · 총 {count}회 · 저장된 기록 1개를 1회로 집계합니다. 같은 날 별도 재측정은 포함하며 기존 기록의 수치 수정은 횟수를 늘리지 않습니다.')
+    st.caption('연도 선택은 월별 집계에만 적용합니다. 측정표·위치도·이력·전후 비교는 위에서 개별 챔버를 선택해 확인하세요.')
+
+
 def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     spacing=kind=='spacingMeasurements'
     st.markdown("""<style>
@@ -198,6 +254,9 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
 </style>""",unsafe_allow_html=True)
     scoped=filter_rows(store.records(path,kind),equipment,chamber)
     flatness_type=None if spacing else flatness_type_cards(equipment,scoped)
+    if chamber=='전체':
+        measurement_overview(scoped,kind,equipment,chambers,flatness_type)
+        return
     query=st.text_input('측정 기록 검색',key=f'search_{kind}')
     rows=filter_rows(scoped,equipment,chamber,query)
     if not spacing:rows=[row for row in rows if row['type']==flatness_type]

@@ -300,6 +300,7 @@ def test_flatness_type_cards_and_comparison_ui(tmp_path):
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
     app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
     app.button(key='nav_hw_section_'+'Flatness').click().run()
+    app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber A').run()
     assert not app.exception
     assert any(x.label=='Diffuser 데이터 보기' for x in app.button)
     assert any(x.label=='Susceptor 데이터 보기' for x in app.button)
@@ -360,3 +361,66 @@ def test_hw_excel_sheets_values_and_archived_work(tmp_path):
     empty=load_workbook(BytesIO(hw_excel_bytes(tmp_path/'empty.sqlite3')))
     assert len(empty.sheetnames)==11 and empty['Spacing']['A4'].value=='등록된 측정 데이터 없음'
 
+
+
+def test_measurement_summary_scope_latest_and_months():
+    from hw_ui import measurement_summary_data
+    from copy import deepcopy
+    first=fixture()['spacingMeasurements'][0]
+    latest={**first,'id':'SP2','measuredAt':'2026-01-02','values':[None]*4+[0]+[None]*4}
+    same_day={**first,'id':'SP3','measuredAt':'2026-01-02','originalOrder':2}
+    rows=[first,latest,same_day,{**first,'id':'OLD','measuredAt':'2024-12-31'}, {**first,'id':'OTHER','equipmentId':'OTHER'}, {**first,'id':'DELETED','deletedAt':'2026-01-03'}]
+    before=deepcopy(rows)
+    summary,months=measurement_summary_data(rows,'A4CVD15I',['Chamber A','Chamber B'],'spacingMeasurements',year=2026)
+    assert summary[0]['최신 측정일']=='2026-01-02'
+    assert summary[0]['Center 값']==4
+    assert summary[0]['측정 개수']=='8/9'
+    assert summary[1]['최신 측정일']=='측정 기록 없음'
+    assert summary[1]['Center 값'] is None
+    assert len(months)==12 and months[0]['Chamber A']==2
+    assert sum(row['Chamber A'] for row in months)==2
+    zero,_=measurement_summary_data([latest],'A4CVD15I',['Chamber A'],'spacingMeasurements')
+    assert zero[0]['Center 값']==0 and zero[0]['Max−Min']==0
+    assert zero[0]['측정 개수']=='1/9'
+    flat=fixture()['flatnessMeasurements'][0]
+    flat_rows=[flat,{**flat,'id':'SUS1','type':'Susceptor','measuredAt':'2026-04-01'}]
+    flat_summary,flat_months=measurement_summary_data(flat_rows,'A4CVD15I',['Chamber A'],'flatnessMeasurements','Diffuser',2026)
+    assert flat_summary[0]['최신 측정일']=='2025-02-01'
+    assert flat_summary[0]['최솟값']==0
+    assert sum(r['Chamber A'] for r in flat_months)==0
+    assert rows==before
+
+
+def test_measurement_overview_ui_and_chamber_detail(tmp_path):
+    db=setup_ui(tmp_path);data=fixture()
+    data['equipments'][0]['chambers'].append({'chamberId':'Chamber B','initialParts':{},'installedParts':{}})
+    data['spacingMeasurements'].extend([{**data['spacingMeasurements'][0],'id':'SP2','measuredAt':'2025-02-01'}, {**data['spacingMeasurements'][0],'id':'SP_OLD','measuredAt':'2024-01-01'}])
+    data['flatnessMeasurements'].append({**data['flatnessMeasurements'][0],'id':'SUS1','type':'Susceptor','measuredAt':'2026-04-01'})
+    hw.import_backup(db,encoded(data),'등록자')
+    app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
+    app.button(key='nav_main_page_설비 H/W 이력관리').click().run()
+    app.button(key='nav_hw_section_Spacing').click().run()
+    assert not app.exception
+    assert [x.value for x in app.subheader]==['챔버별 최신 측정 요약','월별 측정 횟수']
+    assert not any('수치 직접 편집' in x.label for x in app.expander)
+    assert not any(x.label in ['측정 보기 방식','측정 기록 검색'] for x in list(app.radio)+list(app.text_input))
+    assert not any('새 측정 등록' in x.label for x in app.expander)
+    year=next(x for x in app.selectbox if x.label=='측정 집계 연도')
+    assert year.value==2025
+    assert any('총 2회' in x.value for x in app.caption)
+    year.set_value(2024).run()
+    assert not app.exception
+    summary=next(x.value for x in app.dataframe if '최신 측정일' in x.value.columns)
+    assert summary.iloc[0]['최신 측정일']=='2025-02-01'
+    assert summary.iloc[1]['최신 측정일']=='측정 기록 없음'
+    assert any('총 1회' in x.value for x in app.caption)
+    app.button(key='nav_hw_section_Flatness').click().run()
+    assert not app.exception and any('Diffuser Flatness' in x.value for x in app.caption)
+    app.button(key='flatness_card_A4CVD15I_Susceptor').click().run()
+    assert not app.exception and any('Susceptor Flatness' in x.value for x in app.caption)
+    summary=next(x.value for x in app.dataframe if '최신 측정일' in x.value.columns)
+    assert summary.iloc[0]['최신 측정일']=='2026-04-01'
+    app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber A').run()
+    assert not app.exception
+    assert any('수치 직접 편집' in x.label for x in app.expander)
+    assert any('Susceptor Flatness 실측 데이터' in x.value for x in app.subheader)
