@@ -133,7 +133,7 @@ def test_pending_work_link_roundtrip(tmp_path):
     selector.set_value(saved['id']).run()
     app.button(key='hw_back_pending').click().run()
     assert not app.exception
-    assert app.session_state['main_page']=='Pending 현황'
+    assert app.session_state['main_page']=='PENDING 현황'
     assert app.text_input(key='keyword').value=='SW:6'
     assert any('관련 H/W 작업 이력' in x.label for x in app.expander)
 
@@ -179,10 +179,14 @@ def test_archive_restore_and_backup_retains_history(tmp_path):
 
 
 def test_monthly_controls_and_card_actions(tmp_path):
-    db=setup_ui(tmp_path);hw.import_backup(db,encoded(fixture()),'등록자')
+    db=setup_ui(tmp_path);data=fixture()
+    data['equipments'][0]['chambers'].append({'chamberId':'Chamber B','initialParts':{'Diffuser':{'sn':'B-SN','installedDate':'2025-02-01'}},'installedParts':{}})
+    hw.import_backup(db,encoded(data),'등록자')
     app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
     app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
     assert not app.exception
+    assert sum('<table class="hw-parts-table">' in x.value for x in app.markdown)==1
+    assert any('<th>Chamber</th>' in x.value and 'Chamber A' in x.value and 'Chamber B' in x.value and 'B-SN' in x.value for x in app.markdown)
     assert app.selectbox(key='monthly_part_A4CVD15I').options[1:9]==hw.PARTS[:8]
     app.selectbox(key='monthly_year_A4CVD15I').set_value(2025).run()
     app.selectbox(key='monthly_chamber_A4CVD15I').set_value('전체 Chamber').run()
@@ -199,10 +203,10 @@ def test_monthly_controls_and_card_actions(tmp_path):
     next(x for x in app.text_input if x.label=='삭제 사유 *').set_value('중복')
     next(x for x in app.button if x.label=='삭제 보관 확인').click().run()
     assert not app.exception and not hw.records(db,'workLogs')
-    next(x for x in app.text_input if x.label=='복원 담당자 *').set_value('복원자')
-    next(x for x in app.text_input if x.label=='복원 사유 *').set_value('복원 테스트')
-    next(x for x in app.button if x.label=='작업 이력 복원').click().run()
-    assert not app.exception and len(hw.records(db,'workLogs'))==1
+    assert not any('삭제 보관함' in x.label for x in app.expander)
+    archived=hw.records(db,'workLogs',include_deleted=True)[0]
+    assert archived['deletedAt']
+
 
 
 def test_measurement_diagrams_and_color_direction():
@@ -355,3 +359,4 @@ def test_hw_excel_sheets_values_and_archived_work(tmp_path):
     assert value('장착 부품','S/N')=='OLD'
     empty=load_workbook(BytesIO(hw_excel_bytes(tmp_path/'empty.sqlite3')))
     assert len(empty.sheetnames)==11 and empty['Spacing']['A4'].value=='등록된 측정 데이터 없음'
+

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 pushd "%~dp0"
-echo App version: HW-15
+echo App version: HW-16
 echo App folder: %CD%
 if exist ".venv312\Scripts\python.exe" (
   ".venv312\Scripts\python.exe" -m streamlit run app.py
@@ -14,3 +14,4 @@ if exist ".venv312\Scripts\python.exe" (
 )
 popd
 pause
+

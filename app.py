@@ -4,10 +4,10 @@ import plotly.express as px
 import streamlit as st
 from hw_ui import card_menu
 from pending_store import set_default, source_key, add_item, read_items, apply_edits, update_item, read_history, EDITABLE, read_revisions, save_revision, suggest_revision, read_revision_history, REV_FIELDS
-from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending
+from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending, pending_deadlines
 
 APP_NAME='양산 설비 통합 관리'
-APP_VERSION='HW-15'
+APP_VERSION='HW-16'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -70,8 +70,8 @@ def parse_revision(data): return load_revision(data)
 st.sidebar.markdown(f'<div class="sidebar-brand">{LOGO_SVG}<span>{APP_NAME}</span></div>',unsafe_allow_html=True)
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
 with st.sidebar:
-    page=card_menu('화면 선택',['Pending 현황','REV 관리','설비 H/W 이력관리'],key='main_page')
-pending_filters=st.sidebar.container() if page=='Pending 현황' else None
+    page=card_menu('화면 선택',['PENDING 현황','설비 H/W 이력관리','REV 관리'],key='main_page')
+pending_filters=st.sidebar.container() if page=='PENDING 현황' else None
 upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
 saved_default = Path(__file__).parent/'data'/'default.xlsx'
@@ -168,12 +168,6 @@ if page == 'REV 관리':
         st.success(f"목록 마지막 REV: {last['Rev No.']} · 변경일: {last['변경일자']} · 이력 {len(revisions)}건")
     raw_revisions=revisions
     revisions,display_changes=revision_display(raw_revisions)
-    with st.expander(f'표시 정리 내역 · {len(display_changes)}개 셀'):
-        st.caption('원본 Excel과 저장된 데이터는 보존하고, 화면·REV CSV 표기만 정리했습니다. 수정 폼에서 저장하면 정리된 값도 변경 이력에 기록됩니다.')
-        if display_changes.empty: st.info('정리가 필요한 표기가 없습니다.')
-        else:
-            st.dataframe(display_changes,hide_index=True,use_container_width=True)
-            st.download_button('표시 정리 내역 CSV',safe_export(display_changes).to_csv(index=False).encode('utf-8-sig'),'rev_display_changes.csv','text/csv')
     st.subheader('REV 변경 이력')
     rev_query=st.text_input('REV 이력 검색',placeholder='변경내용 / 작성자 / 키워드 검색',key='rev_search')
     filtered=revisions
@@ -283,7 +277,7 @@ else:
     st.info('샘플 모드에서는 실제 항목을 저장하지 않습니다. 실제 Excel 모드에서 등록해주세요.')
 st.caption(f'데이터 출처: {source} · 원본 보존 · 외부 AI 전송 없음')
 df=binary_status(df)
-pending_filters.markdown('#### Pending 현황 필터')
+pending_filters.markdown('#### PENDING 현황 필터')
 with pending_filters:
     scope=card_menu('조회 범위',['주요 5개 분야','보조 시트','모든 시트'],key='pending_scope')
 count_context=(source_key(content) if mode=='실제 Excel' else 'sample',scope)
@@ -352,6 +346,16 @@ else:
                 cells[3].write(str(int(row['전체'])))
                 cells[4].write(f"{row['완료율(%)']:.1f}")
     st.caption('분야·설비 표의 완료 또는 미완료 숫자를 누르면 아래 Pending List가 해당 조건으로 바뀝니다.')
+st.subheader('미완료 목표일 현황')
+deadline_rows=pending_deadlines(view)
+deadline_order=['기한초과','임박','여유']
+deadline_counts=deadline_rows['목표일 구분'].value_counts().reindex(deadline_order,fill_value=0).rename_axis('목표일 구분').reset_index(name='건수')
+deadline_fig=px.bar(deadline_counts,x='목표일 구분',y='건수',color='목표일 구분',text='건수',category_orders={'목표일 구분':deadline_order},color_discrete_map={'기한초과':'#dc2626','임박':'#f59e0b','여유':'#2563eb'})
+deadline_fig.update_layout(height=280,showlegend=False,yaxis={'dtick':1,'rangemode':'tozero'},margin=dict(l=0,r=0,t=15,b=0),paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
+st.plotly_chart(deadline_fig,use_container_width=True,key='pending_deadline_chart')
+st.caption('한국 날짜 기준 · 기한초과: 어제까지 / 임박: 오늘~7일 후 / 여유: 8일 이후 · 현재 사이드바·검색 조건의 미완료 항목만 집계합니다.')
+unknown_deadlines=int((deadline_rows['목표일 구분']=='목표일 확인 대상').sum())
+st.caption(f'목표일 미기재·확인 대상 {unknown_deadlines}건 · 날짜가 불명확한 항목은 그래프에서 제외합니다.')
 st.subheader('Pending List')
 field_labels={'HW(설계)':'H/W 설계','SW':'S/W'}
 list_fields=st.multiselect('Pending List 분야 필터',options=sorted(base['분야'].unique()),default=sorted(base['분야'].unique()),format_func=lambda x:field_labels.get(x,x),key='list_fields')
@@ -371,7 +375,7 @@ else:
     list_identity=json.dumps([source_key(content) if mode=='실제 Excel' else 'sample',list_view['ID'].tolist()],ensure_ascii=False)
     table_key='pending_rows_'+hashlib.sha256(list_identity.encode()).hexdigest()[:20]
     st.caption('행을 클릭하면 아래 항목 상세를 확인할 수 있습니다. 선택 전에는 첫 번째 항목을 표시합니다.')
-    event=st.dataframe(list_view[['ID','설비','분야','상태','Unit','내용','담당자','목표일','시트','원본 행']],hide_index=True,use_container_width=True,key=table_key,on_select='rerun',selection_mode='single-row')
+    event=st.dataframe(list_view[['ID','설비','분야','상태','Unit','내용','담당자','목표일','시트']],hide_index=True,use_container_width=True,column_config={'ID':st.column_config.TextColumn(width='small'),'설비':st.column_config.TextColumn(width='small'),'분야':st.column_config.TextColumn(width='small'),'상태':st.column_config.TextColumn(width='small'),'Unit':st.column_config.TextColumn(width='small'),'내용':st.column_config.TextColumn(width='large'),'담당자':st.column_config.TextColumn(width='small'),'목표일':st.column_config.TextColumn(width='small'),'시트':st.column_config.TextColumn(width='small')},key=table_key,on_select='rerun',selection_mode='single-row')
     selected_rows=event.selection.rows
     selected_position=selected_rows[0] if selected_rows and 0<=selected_rows[0]<len(list_view) else 0
     selected=list_view.iloc[selected_position]['ID']
@@ -426,8 +430,9 @@ else:
             if history.empty: st.info('아직 변경 이력이 없습니다.')
             else: st.dataframe(history,hide_index=True,use_container_width=True)
 a,b=st.columns(2)
-a.download_button('↓ 조회 결과 CSV',safe_export(list_view).to_csv(index=False).encode('utf-8-sig'),'pending_filtered.csv','text/csv',use_container_width=True)
-b.download_button('↓ 조회 결과 Excel',excel_bytes(list_view),'pending_filtered.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
+export_view=list_view.drop(columns=['원본 행'],errors='ignore')
+a.download_button('↓ 조회 결과 CSV',safe_export(export_view).to_csv(index=False).encode('utf-8-sig'),'pending_filtered.csv','text/csv',use_container_width=True)
+b.download_button('↓ 조회 결과 Excel',excel_bytes(export_view),'pending_filtered.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
 st.caption('다운로드에는 현재 검색·필터 결과가 반영됩니다. Excel에는 분야별·설비별 집계 시트도 포함됩니다.')
 
 if mode == '실제 Excel':
@@ -437,3 +442,4 @@ if mode == '실제 Excel':
         else:
             st.dataframe(history,hide_index=True,use_container_width=True)
             st.download_button('변경 이력 CSV 다운로드',safe_export(history).to_csv(index=False).encode('utf-8-sig'),'pending_history.csv','text/csv')
+

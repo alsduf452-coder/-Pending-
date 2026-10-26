@@ -86,7 +86,7 @@ def show_pending_link(link,context):
         if not matched.empty:
             st.write('현재 Pending 상태:',matched.iloc[0]['상태'])
             def back():
-                st.session_state['main_page']='Pending 현황'
+                st.session_state['main_page']='PENDING 현황'
                 st.session_state['keyword']=link['id']
                 st.session_state.pop('count_selection',None)
                 st.session_state.pop('list_fields',None)
@@ -395,9 +395,9 @@ def hw_excel_bytes(path):
         for ch in eq['chambers']:
             chambers.append({'설비':eq['id'],'챔버':ch['chamberId'],'챔버명':ch.get('name',''),'초기 장착 원문':serialized(ch.get('initialParts',{}))})
             for part in store.installed_parts(eq,ch['chamberId'],logs):
-                installed.append({'설비':eq['id'],'챔버':ch['chamberId'],**mapped(part,{'partType':'부품','sn':'S/N','installedDate':'장착일','lastWorkDate':'최근 작업일','lastWorkLogId':'관련 작업 ID','status':'상태','basis':'계산 근거'})})
+                installed.append({'설비':eq['id'],'챔버':ch['chamberId'],'경과':store.installation_age(part.get('lastWorkDate') or part.get('installedDate',''),part['partType'],today())['label'],**mapped(part,{'partType':'부품','sn':'S/N','installedDate':'장착일','lastWorkDate':'최근 작업일','lastWorkLogId':'관련 작업 ID','status':'상태','basis':'계산 근거'})})
     add('챔버 정보',chambers,['설비','챔버','챔버명','초기 장착 원문'])
-    add('장착 부품',installed,['설비','챔버','부품','S/N','장착일','최근 작업일','관련 작업 ID','상태','계산 근거'])
+    add('장착 부품',installed,['설비','챔버','부품','S/N','장착일','최근 작업일','경과'])
     work_map={'id':'작업 ID','equipmentId':'설비','chamberId':'챔버','workDate':'작업일','workTimestamp':'작업 시각','workOrder':'작업 차수','workType':'작업 유형','targetPart':'부품','beforeSn':'교체 전 S/N','afterSn':'교체 후 S/N','reason':'사유','details':'내용','worker':'작업자','issueStatus':'결과','isAmbiguous':'원본 검토 표시','ambiguityReason':'원본 검토 사유','pendingLink':'Pending 연결','source':'원문 출처'}
     add('작업 교체 이력',[mapped(r,work_map) for r in logs],list(work_map.values()))
     trash_map={**work_map,'deletedAt':'삭제 시각','deletedBy':'삭제자','deletionReason':'삭제 사유'}
@@ -501,7 +501,8 @@ def render_hw(data_dir,context=None):
 .hw-parts-scroll {overflow:auto;border:1px solid #94a3b8;border-radius:8px;margin-bottom:16px}
 .hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:620px;table-layout:fixed;font-size:13px}
 .hw-parts-table th {background:#cbd5e1;text-align:left;padding:10px;border:1px solid #94a3b8}
-.hw-parts-table th:nth-child(1) {width:19%}.hw-parts-table th:nth-child(2) {width:27%}.hw-parts-table th:nth-child(3),.hw-parts-table th:nth-child(4) {width:20%}.hw-parts-table th:nth-child(5) {width:14%}
+.hw-parts-table th:nth-child(1) {width:12%}.hw-parts-table th:nth-child(2) {width:17%}.hw-parts-table th:nth-child(3) {width:25%}.hw-parts-table th:nth-child(4),.hw-parts-table th:nth-child(5) {width:17%}.hw-parts-table th:nth-child(6) {width:12%}
+.hw-parts-table .hw-chamber-start td {border-top:2px solid #64748b}
 .hw-parts-table td {overflow-wrap:anywhere;padding:10px;border:1px solid #b6c4d5}
 .hw-work-badges {display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-height:30px}
 .hw-work-badges span {background:#dbeafe;border:1px solid #94a3b8;color:#173c72;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
@@ -514,7 +515,7 @@ def render_hw(data_dir,context=None):
 [class*="st-key-hw_work_card_"] {background:#f1f5f9;border-radius:10px}
 [class*="st-key-hw_work_card_"] [data-testid="stVerticalBlock"] {gap:9px}
 [class*="st-key-hw_work_card_"] [data-testid="stHorizontalBlock"] {gap:8px;align-items:center}
-[class*="st-key-hw_work_card_"] button {min-height:30px;padding:3px 8px}
+[class*="st-key-hw_work_card_"] button {height:36px;min-height:36px;width:100%;padding:4px 8px}
 [class*="st-key-hw_work_card_"] button p {font-size:12px}
 </style>""",unsafe_allow_html=True)
     st.header('설비 H/W 이력관리')
@@ -566,10 +567,11 @@ def render_hw(data_dir,context=None):
     chamber=st.selectbox('H/W 챔버',['전체']+chambers,key=f'hw_chamber_{equipment}')
     logs=store.records(path,'workLogs')
     if section=='설비 현황':
+        combined=[]
         for ch in chambers if chamber=='전체' else [chamber]:
-            st.subheader(ch)
-            parts=store.installed_parts(lookup[equipment],ch,logs)
-            installed_table(parts)
+            combined.extend({**part,'chamberId':ch} for part in store.installed_parts(lookup[equipment],ch,logs))
+        st.subheader('챔버별 장착 부품 통합 현황')
+        installed_table(combined)
         st.caption('초기 장착 기준에 시간순 부품 교체 이력을 적용한 결과입니다. 검토 표시가 있는 작업은 자동 반영하지 않습니다. 기록 불일치는 원본과 대조해주세요.')
         st.caption('색상 기준: 장착일·최근 변경일 각각 0~364일은 초록→노랑→주황, 365일 이상은 빨강입니다. 경과 표시는 최근 변경일(없으면 장착일) 기준입니다. 원본처럼 RFG·Matcher·RPSC Reactor·MF Generator는 색상에서 제외합니다.')
         monthly_chart(logs,equipment,chambers)
@@ -588,7 +590,6 @@ def render_hw(data_dir,context=None):
         query=st.text_input('작업 이력 검색 · 부품/SN/내용/담당자',key='hw_work_search')
         with st.expander('＋ 작업 이력 등록',expanded=bool(st.session_state.get('pending_hw_prefill'))):work_form(path,equipment,chambers,context)
         rows=filter_rows(logs,equipment,chamber,query)
-        work_trash(path,equipment)
         if not rows:st.info('해당 조건의 작업 이력이 없습니다.');return
         df=pd.DataFrame([{'ID':r['id'],'설비':r['equipmentId'],'챔버':r['chamberId'],'작업일':r['workDate'],'작업':r['workType'],'부품':r.get('targetPart',''),'교체 전 S/N':r.get('beforeSn',''),'교체 후 S/N':r.get('afterSn',''),'내용':r.get('details',''),'작업자':r.get('worker',''),'결과':r.get('issueStatus','')} for r in rows])
         work_cards(path,rows,equipment,chambers,context)
@@ -620,13 +621,14 @@ def render_hw(data_dir,context=None):
 def installed_table(parts):
     from html import escape
     rows=[]
-    headers=['부품','S/N','장착일','최근 변경일','경과']
+    headers=['Chamber','부품','S/N','장착일','최근 변경일','경과']
     for p in parts:
         recent=p.get('lastWorkDate') or p.get('installedDate','')
         age=store.installation_age(recent,p['partType'],today())
         installed_age=store.installation_age(p.get('installedDate',''),p['partType'],today())
-        cells=[p['partType'],p.get('sn',''),p.get('installedDate',''),recent,age['label']]
-        rows.append('<tr>'+''.join(f'<td style="{installed_age["style"] if i==2 else age["style"] if i in [3,4] else ""}">'+escape(str(v))+'</td>' for i,v in enumerate(cells))+'</tr>')
+        cells=[p.get('chamberId',''),p['partType'],p.get('sn',''),p.get('installedDate',''),recent,age['label']]
+        rows.append(('<tr class="hw-chamber-start">' if not rows or p.get('chamberId')!=previous_chamber else '<tr>')+''.join(f'<td style="{installed_age["style"] if i==3 else age["style"] if i in [4,5] else ""}">'+escape(str(v))+'</td>' for i,v in enumerate(cells))+'</tr>')
+        previous_chamber=p.get('chamberId')
     st.markdown('<div class="hw-parts-scroll"><table class="hw-parts-table"><thead><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>',unsafe_allow_html=True)
 
 
@@ -679,7 +681,11 @@ def work_cards(path,rows,equipment,chambers,context):
     for item in rows[(page-1)*10:page*10]:
         identifier=item['id']
         with st.container(border=True,key=f'hw_work_card_{identifier}'):
-            header,result,edit,delete=st.columns([8,1.4,1,1],gap='small')
+            header,actions=st.columns([8,2],gap='small')
+            with actions:
+                result=st.container()
+                edit=st.container()
+                delete=st.container()
             badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart','')]
             badge_html=''.join(f'<span class="{"hw-work-date" if i==0 else "hw-work-result" if i==5 and x=="정상완료" else ""}">{escape(str(x))}</span>' for i,x in enumerate(badges) if x)
             header.markdown('<div class="hw-work-badges">'+badge_html+'</div>',unsafe_allow_html=True)
@@ -698,7 +704,7 @@ def work_cards(path,rows,equipment,chambers,context):
                 st.subheader('선택한 작업 수정')
                 work_form(path,equipment,chambers,context,item)
             if st.session_state.get('hw_archive_id')==identifier:
-                st.warning('삭제하면 장착 현황 계산·월별 집계·기본 목록에서 제외됩니다. 원문과 첨부·측정 기록은 보존하며 삭제 보관함에서 복원할 수 있습니다.')
+                st.warning('삭제하면 장착 현황 계산·월별 집계·기본 목록에서 제외됩니다. 원문과 첨부·측정 기록은 보존하며 삭제 보관 기록은 내부에 보존됩니다.')
                 with st.form(f'archive_form_{identifier}_{item["_version"]}'):
                     actor=st.text_input('삭제 담당자 *')
                     reason=st.text_input('삭제 사유 *')
@@ -941,3 +947,4 @@ def comparison_view(rows,current,kind,equipment):
 def measurement_export(rows,kind,spacing):
     export=pd.DataFrame([{'ID':row['id'],'설비':row['equipmentId'],'챔버':row['chamberId'],'측정일':row['measuredAt'],'종류':'Spacing' if spacing else row['type'],'측정값':json.dumps(row['values'] if spacing else row['grid']),'비고':row.get('notes','')} for row in rows])
     export_buttons(export,'hw_measure_'+kind)
+

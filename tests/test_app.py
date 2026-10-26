@@ -18,12 +18,14 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 통합 관리' for x in app.title)
-    assert any('HW-15' in x.value for x in app.caption)
-    assert app.session_state['main_page']=='Pending 현황'
-    assert all(app.button(key='nav_main_page_'+label) for label in ['Pending 현황','REV 관리','설비 H/W 이력관리'])
+    assert any('HW-16' in x.value for x in app.caption)
+    assert app.session_state['main_page']=='PENDING 현황'
+    assert [x.label for x in app.sidebar.button if x.key and x.key.startswith('nav_main_page_')]==['PENDING 현황','설비 H/W 이력관리','REV 관리']
+    if not app.metric:app.radio(key='data_mode').set_value('샘플 데이터').run()
     app.button(key='nav_main_page_'+'REV 관리').click().run()
     assert not app.exception
     assert any('REV 관리' in x.value for x in app.header)
+    assert not any('표시 정리 내역' in x.label for x in app.expander)
     # 실제 데이터가 있는 환경에서는 요약과 18건 이력이 표시됩니다.
     from pathlib import Path
     if (Path(__file__).resolve().parents[1]/'data/default.xlsx').exists():
@@ -35,7 +37,7 @@ def test_title_and_visible_rev_navigation():
         assert 'border:1px solid #64748b' in history
         app.text_input(key='rev_search').set_value('NoSuchRev123456').run()
         assert any('검색 조건' in x.value for x in app.info)
-    app.button(key='nav_main_page_'+'Pending 현황').click().run()
+    app.button(key='nav_main_page_'+'PENDING 현황').click().run()
     assert not app.exception
     app.radio(key='data_mode').set_value('샘플 데이터').run()
     app.button(key='nav_main_page_'+'REV 관리').click().run()
@@ -52,6 +54,8 @@ def test_list_field_filter_and_removed_raw_expander():
     assert not app.exception
     tables=[x.value for x in app.dataframe if {'ID','분야'}.issubset(x.value.columns)]
     assert len(tables)==1 and set(tables[0]['분야'])=={'SW'}
+    assert '원본 행' not in tables[0].columns
+    assert any('미완료 목표일 현황'==x.value for x in app.subheader)
     assert app.metric[0].value==dashboard_total
     assert any('S/W'==x for x in app.multiselect(key='list_fields').options)
     app.multiselect(key='list_fields').set_value([]).run()
@@ -105,3 +109,4 @@ def test_pending_row_selection_and_filter_reset():
     filtered=next(x.value for x in app.dataframe if 'ID' in x.value.columns)
     detail=next(x.value for x in app.markdown if 'aria-label="Pending 항목 상세"' in x.value)
     assert escape(filtered.iloc[0]['내용']) in detail
+

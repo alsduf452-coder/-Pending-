@@ -177,3 +177,25 @@ def revision_table_html(df):
     head='<thead><tr>'+''.join('<th>'+escape(c)+'</th>' for c in columns)+'</tr></thead>'
     rows=''.join('<tr>'+''.join('<td>'+cell(row[c])+'</td>' for c in columns)+'</tr>' for _,row in df.iterrows())
     return '<table class="rev-history-table">'+head+'<tbody>'+rows+'</tbody></table>'
+
+
+
+def pending_deadlines(df, as_of=None):
+    """날짜가 명확한 미완료 목표일만 분류합니다. 원본 표기는 수정하지 않습니다."""
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    import re
+    today=as_of or datetime.now(ZoneInfo('Asia/Seoul')).date()
+    def parse(value):
+        if isinstance(value,datetime):return value.date()
+        if isinstance(value,date):return value
+        text=str(value).strip()
+        match=re.fullmatch(r'(\d{4}|\d{2})[-./](\d{1,2})[-./](\d{1,2})\.?',text)
+        if not match:return None
+        y,m,d=map(int,match.groups())
+        if len(match[1])==2:y+=2000
+        try:return date(y,m,d)
+        except ValueError:return None
+    result=df.loc[df['상태']=='미완료'].copy()
+    result['목표일 구분']=[('기한초과' if (target-today).days<0 else '임박' if (target-today).days<=7 else '여유') if (target:=parse(value)) else '목표일 확인 대상' for value in result['목표일']]
+    return result

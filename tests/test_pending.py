@@ -74,3 +74,14 @@ def test_binary_summary_and_drilldown():
     assert len(drilldown_pending(normalized,{'group':'분야','value':'SW','state':'미완료'}))==1
     assert len(drilldown_pending(normalized,{'state':'완료'}))==1
     assert len(drilldown_pending(normalized,{'group':'분야','value':'없는분야','state':'미완료'}))==0
+
+
+
+def test_pending_deadlines_boundaries_and_invalid_values():
+    from datetime import date
+    from pending_data import pending_deadlines
+    df=pd.DataFrame({'상태':['미완료']*10+['완료'],'목표일':['2026-10-25','2026-10-26','2026-11-02','2026-11-03','26.10.25','2026/11/03','','2026-02-30','미정','2026-10-26 ~ 2026-10-30','2026-10-25']})
+    before=df.copy(deep=True)
+    result=pending_deadlines(df,date(2026,10,26))
+    assert result['목표일 구분'].tolist()==['기한초과','임박','임박','여유','기한초과','여유']+['목표일 확인 대상']*4
+    pd.testing.assert_frame_equal(df,before)
