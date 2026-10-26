@@ -186,7 +186,7 @@ def test_monthly_controls_and_card_actions(tmp_path):
     app.button(key='nav_main_page_'+'설비 H/W 이력관리').click().run()
     assert not app.exception
     assert sum('<table class="hw-parts-table">' in x.value for x in app.markdown)==1
-    assert any('<th>Chamber</th>' in x.value and 'Chamber A' in x.value and 'Chamber B' in x.value and 'B-SN' in x.value for x in app.markdown)
+    assert any('<th scope="col">Chamber A</th>' in x.value and 'Chamber A' in x.value and 'Chamber B' in x.value and 'B-SN' in x.value for x in app.markdown)
     assert app.selectbox(key='monthly_part_A4CVD15I').options[1:9]==hw.PARTS[:8]
     app.selectbox(key='monthly_year_A4CVD15I').set_value(2025).run()
     app.selectbox(key='monthly_chamber_A4CVD15I').set_value('전체 Chamber').run()

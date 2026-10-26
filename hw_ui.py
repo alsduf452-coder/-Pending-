@@ -499,19 +499,23 @@ def render_hw(data_dir,context=None):
     path=data_dir/'hw_history.sqlite3'
     st.markdown("""<style>
 .hw-parts-scroll {overflow:auto;border:1px solid #94a3b8;border-radius:8px;margin-bottom:16px}
-.hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:620px;table-layout:fixed;font-size:13px}
-.hw-parts-table th {background:#cbd5e1;text-align:left;padding:10px;border:1px solid #94a3b8}
-.hw-parts-table th:nth-child(1) {width:12%}.hw-parts-table th:nth-child(2) {width:17%}.hw-parts-table th:nth-child(3) {width:25%}.hw-parts-table th:nth-child(4),.hw-parts-table th:nth-child(5) {width:17%}.hw-parts-table th:nth-child(6) {width:12%}
-.hw-parts-table .hw-chamber-start td {border-top:2px solid #64748b}
-.hw-parts-table td {overflow-wrap:anywhere;padding:10px;border:1px solid #b6c4d5}
+.hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:650px;table-layout:fixed;font-size:12px}
+.hw-parts-table th {background:#cbd5e1;text-align:center;padding:9px 6px;border:1px solid #94a3b8}
+.hw-parts-table th:first-child {width:12%}
+.hw-parts-table tbody th {text-align:left;vertical-align:middle}
+.hw-parts-table td {overflow-wrap:anywhere;padding:8px 6px;border:1px solid #94a3b8;vertical-align:top}
+.hw-part-sn {background:#dbe5f0;border:1px solid #b6c4d5;border-radius:4px;padding:4px 5px;margin-bottom:5px;font-size:11px;line-height:1.5}
+.hw-part-date,.hw-part-age {padding:3px 5px;margin-top:3px;border-radius:3px;font-size:11px;line-height:1.4}
+.hw-part-age {font-weight:600}
+.hw-part-empty {text-align:center;color:#64748b;vertical-align:middle!important}
 .hw-work-badges {display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-height:30px}
 .hw-work-badges span {background:#dbeafe;border:1px solid #94a3b8;color:#173c72;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
 .hw-work-badges .hw-work-date {background:transparent;border:0;padding-left:0;color:#075985}
 .hw-work-badges .hw-work-result {background:#d1fae5;border-color:#6da997;color:#065f46}
 .hw-work-sn {background:#e2e8f0;border:1px solid #94a3b8;border-radius:5px;padding:7px 10px;color:#173c72;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
-.hw-work-body {border-top:1px solid #b6c4d5;margin-top:12px;padding-top:12px;color:#172b4d;font-size:13px;line-height:1.6}
+.hw-work-body {border-top:1px solid #b6c4d5;margin-top:6px;padding-top:8px;color:#172b4d;font-size:13px;line-height:1.6}
 .hw-work-reason,.hw-work-description {white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 7px}
-.hw-work-worker {border-top:1px solid #cbd5e1;margin-top:10px;padding:9px 0 12px;color:#475569;font-size:12px}
+.hw-work-worker {border-top:1px solid #cbd5e1;margin-top:8px;padding:7px 0 10px;color:#475569;font-size:12px}
 [class*="st-key-hw_work_card_"] {background:#f1f5f9;border-radius:10px}
 [class*="st-key-hw_work_card_"] [data-testid="stVerticalBlock"] {gap:9px}
 [class*="st-key-hw_work_card_"] [data-testid="stHorizontalBlock"] {gap:8px;align-items:center}
@@ -571,7 +575,7 @@ def render_hw(data_dir,context=None):
         for ch in chambers if chamber=='전체' else [chamber]:
             combined.extend({**part,'chamberId':ch} for part in store.installed_parts(lookup[equipment],ch,logs))
         st.subheader('챔버별 장착 부품 통합 현황')
-        installed_table(combined)
+        installed_table(combined,chambers if chamber=='전체' else [chamber])
         st.caption('초기 장착 기준에 시간순 부품 교체 이력을 적용한 결과입니다. 검토 표시가 있는 작업은 자동 반영하지 않습니다. 기록 불일치는 원본과 대조해주세요.')
         st.caption('색상 기준: 장착일·최근 변경일 각각 0~364일은 초록→노랑→주황, 365일 이상은 빨강입니다. 경과 표시는 최근 변경일(없으면 장착일) 기준입니다. 원본처럼 RFG·Matcher·RPSC Reactor·MF Generator는 색상에서 제외합니다.')
         monthly_chart(logs,equipment,chambers)
@@ -618,18 +622,30 @@ def render_hw(data_dir,context=None):
     else:measurement_view(path,'spacingMeasurements' if section=='Spacing' else 'flatnessMeasurements',equipment,chamber,chambers,logs)
 
 
-def installed_table(parts):
+def installed_table(parts,chambers=None):
     from html import escape
+    chamber_names=chambers or sorted({p.get('chamberId','') for p in parts})
+    present={p['partType'] for p in parts}
+    part_names=[p for p in store.PARTS if p in present]+sorted(present-set(store.PARTS))
+    indexed={(p.get('chamberId',''),p['partType']):p for p in parts}
     rows=[]
-    headers=['Chamber','부품','S/N','장착일','최근 변경일','경과']
-    for p in parts:
-        recent=p.get('lastWorkDate') or p.get('installedDate','')
-        age=store.installation_age(recent,p['partType'],today())
-        installed_age=store.installation_age(p.get('installedDate',''),p['partType'],today())
-        cells=[p.get('chamberId',''),p['partType'],p.get('sn',''),p.get('installedDate',''),recent,age['label']]
-        rows.append(('<tr class="hw-chamber-start">' if not rows or p.get('chamberId')!=previous_chamber else '<tr>')+''.join(f'<td style="{installed_age["style"] if i==3 else age["style"] if i in [4,5] else ""}">'+escape(str(v))+'</td>' for i,v in enumerate(cells))+'</tr>')
-        previous_chamber=p.get('chamberId')
-    st.markdown('<div class="hw-parts-scroll"><table class="hw-parts-table"><thead><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>',unsafe_allow_html=True)
+    for part in part_names:
+        cells=['<th scope="row">'+escape(part)+'</th>']
+        for chamber in chamber_names:
+            p=indexed.get((chamber,part))
+            if p is None:
+                cells.append('<td class="hw-part-empty">등록 정보 없음</td>');continue
+            recent=p.get('lastWorkDate') or p.get('installedDate','')
+            age=store.installation_age(recent,p['partType'],today())
+            installed_age=store.installation_age(p.get('installedDate',''),p['partType'],today())
+            cells.append('<td><div class="hw-part-sn">S/N: <b>'+escape(str(p.get('sn') or '미기재'))+'</b></div>'
+                +'<div class="hw-part-date" style="'+installed_age['style']+'">장착: '+escape(str(p.get('installedDate') or '미기재'))+'</div>'
+                +'<div class="hw-part-date" style="'+age['style']+'">최근: '+escape(str(recent or '미기재'))+'</div>'
+                +'<div class="hw-part-age" style="'+age['style']+'">'+escape(age['label'])+'</div></td>')
+        rows.append('<tr>'+''.join(cells)+'</tr>')
+    if not rows:rows.append(f'<tr><td colspan="{len(chamber_names)+1}">등록된 장착 부품이 없습니다.</td></tr>')
+    head='<th scope="col">부품</th>'+''.join('<th scope="col">'+escape(ch)+'</th>' for ch in chamber_names)
+    st.markdown('<div class="hw-parts-scroll"><table class="hw-parts-table"><thead><tr>'+head+'</tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>',unsafe_allow_html=True)
 
 
 def monthly_chart(logs,equipment,chambers):
@@ -681,21 +697,17 @@ def work_cards(path,rows,equipment,chambers,context):
     for item in rows[(page-1)*10:page*10]:
         identifier=item['id']
         with st.container(border=True,key=f'hw_work_card_{identifier}'):
-            header,actions=st.columns([8,2],gap='small')
+            header,actions=st.columns([6,4],gap='small')
             with actions:
-                result=st.container()
-                edit=st.container()
-                delete=st.container()
-            badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart','')]
+                edit,delete,trace=st.columns(3,gap='small')
+            badges=[item.get('workTimestamp') or item['workDate'],f"{item.get('workOrder') or 1}차 작업",item['chamberId'],item.get('workType',''),item.get('targetPart',''),item.get('issueStatus','')]
             badge_html=''.join(f'<span class="{"hw-work-date" if i==0 else "hw-work-result" if i==5 and x=="정상완료" else ""}">{escape(str(x))}</span>' for i,x in enumerate(badges) if x)
             header.markdown('<div class="hw-work-badges">'+badge_html+'</div>',unsafe_allow_html=True)
-            result.markdown('<div class="hw-work-badges"><span class="'+('hw-work-result' if item.get('issueStatus')=='정상완료' else '')+'">'+escape(str(item.get('issueStatus') or '미기재'))+'</span></div>',unsafe_allow_html=True)
             edit.button('수정',key=f'card_edit_{identifier}',on_click=choose_work,args=(identifier,True),use_container_width=True)
             delete.button('삭제',key=f'card_archive_{identifier}',on_click=request_archive,args=(identifier,),use_container_width=True)
-            serial,trace=st.columns([8,2],gap='small')
-            serial.markdown('<div class="hw-work-sn">교체 전 S/N: <b>'+escape(str(item.get('beforeSn') or '미기재'))+'</b> → 교체 후 S/N: <b>'+escape(str(item.get('afterSn') or '미기재'))+'</b></div>',unsafe_allow_html=True)
             sn=item.get('afterSn') or item.get('beforeSn') or ''
             trace.button('부품 이동 추적',key=f'card_trace_{identifier}',on_click=trace_work,args=(sn,),disabled=not sn,use_container_width=True)
+            st.markdown('<div class="hw-work-sn">교체 전 S/N: <b>'+escape(str(item.get('beforeSn') or '미기재'))+'</b> → 교체 후 S/N: <b>'+escape(str(item.get('afterSn') or '미기재'))+'</b></div>',unsafe_allow_html=True)
             body='<div class="hw-work-body"><div class="hw-work-reason"><b>사유:</b> '+escape(str(item.get('reason') or '미기재'))+'</div>'
             if item.get('details'):body+='<div class="hw-work-description"><b>내용:</b> '+escape(str(item['details']))+'</div>'
             body+='<div class="hw-work-worker">작업자: <b>'+escape(str(item.get('worker') or '미기재'))+'</b></div></div>'

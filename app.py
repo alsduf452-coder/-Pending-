@@ -7,7 +7,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending, pending_deadlines
 
 APP_NAME='양산 설비 통합 관리'
-APP_VERSION='HW-16'
+APP_VERSION='HW-17'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -351,7 +351,8 @@ deadline_rows=pending_deadlines(view)
 deadline_order=['기한초과','임박','여유']
 deadline_counts=deadline_rows['목표일 구분'].value_counts().reindex(deadline_order,fill_value=0).rename_axis('목표일 구분').reset_index(name='건수')
 deadline_fig=px.bar(deadline_counts,x='목표일 구분',y='건수',color='목표일 구분',text='건수',category_orders={'목표일 구분':deadline_order},color_discrete_map={'기한초과':'#dc2626','임박':'#f59e0b','여유':'#2563eb'})
-deadline_fig.update_layout(height=280,showlegend=False,yaxis={'dtick':1,'rangemode':'tozero'},margin=dict(l=0,r=0,t=15,b=0),paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
+deadline_fig.update_traces(textposition='outside',cliponaxis=False)
+deadline_fig.update_layout(height=140,showlegend=False,xaxis_title=None,yaxis={'title':None,'nticks':4,'range':[0,max(1,int(deadline_counts['건수'].max()))*1.25]},margin=dict(l=0,r=0,t=15,b=5),paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)')
 st.plotly_chart(deadline_fig,use_container_width=True,key='pending_deadline_chart')
 st.caption('한국 날짜 기준 · 기한초과: 어제까지 / 임박: 오늘~7일 후 / 여유: 8일 이후 · 현재 사이드바·검색 조건의 미완료 항목만 집계합니다.')
 unknown_deadlines=int((deadline_rows['목표일 구분']=='목표일 확인 대상').sum())
