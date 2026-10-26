@@ -195,7 +195,7 @@ def measurement_summary_data(records,equipment,chambers,kind,flatness_type=None,
     for ch in chambers:
         scoped=[r for r in rows if r['chamberId']==ch]
         row={'챔버':ch,'최신 측정일':'측정 기록 없음'}
-        metrics={'Center 값':None} if spacing else {'최솟값':None,'최댓값':None}
+        metrics={'Center 값':None} if spacing else {'Center(R3C4)':None,'최솟값':None,'최댓값':None}
         row.update({**metrics,'Max−Min':None,'측정 개수':'—'})
         if scoped:
             latest=max(scoped,key=lambda r:(r['measuredAt'],r.get('originalOrder') or 0,r['id']))
@@ -203,7 +203,7 @@ def measurement_summary_data(records,equipment,chambers,kind,flatness_type=None,
             stats=measurement_stats(grid)
             row['최신 측정일']=latest['measuredAt']
             if spacing:row['Center 값']=latest['values'][4]
-            else:row.update({'최솟값':stats['최소값'],'최댓값':stats['최댓값']})
+            else:row.update({'Center(R3C4)':latest['grid'][2][3],'최솟값':stats['최소값'],'최댓값':stats['최댓값']})
             row['Max−Min']=stats['Max−Min'];row['측정 개수']=f"{stats['측정 수']}/{9 if spacing else 35}"
         summaries.append(row)
     for r in rows:
@@ -219,7 +219,7 @@ def measurement_overview(rows,kind,equipment,chambers,flatness_type=None):
     st.caption(f'{label} · 각 챔버의 전체 기간 최신 기록 · 단위: mils · —는 미측정이며 0은 실측값입니다.')
     summary,_=measurement_summary_data(rows,equipment,chambers,kind,flatness_type)
     display=pd.DataFrame(summary)
-    for column in ['Center 값','최솟값','최댓값','Max−Min']:
+    for column in ['Center 값','Center(R3C4)','최솟값','최댓값','Max−Min']:
         if column in display:
             display[column]=display[column].map(lambda value:'—' if pd.isna(value) else measurement_number(value))
     table(display.to_dict('records'))
@@ -624,7 +624,7 @@ def render_hw(data_dir,context=None):
 .hw-parts-table {width:100%;border-collapse:collapse;background:#f1f5f9;min-width:650px;table-layout:fixed;font-size:12px}
 .hw-parts-table th {background:#cbd5e1;text-align:center;padding:9px 6px;border:1px solid #94a3b8}
 .hw-parts-table th:first-child {width:12%}
-.hw-parts-table tbody th {text-align:left;vertical-align:middle}
+.hw-parts-table tbody th {text-align:center;vertical-align:middle}
 .hw-parts-table td {overflow-wrap:anywhere;padding:8px 6px;border:1px solid #94a3b8;vertical-align:top}
 .hw-part-sn {background:#dbe5f0;border:1px solid #b6c4d5;border-radius:4px;padding:4px 5px;margin-bottom:5px;font-size:11px;line-height:1.5}
 .hw-part-date,.hw-part-age {padding:3px 5px;margin-top:3px;border-radius:3px;font-size:11px;line-height:1.4}

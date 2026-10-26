@@ -384,9 +384,18 @@ def test_measurement_summary_scope_latest_and_months():
     assert zero[0]['측정 개수']=='1/9'
     flat=fixture()['flatnessMeasurements'][0]
     flat_rows=[flat,{**flat,'id':'SUS1','type':'Susceptor','measuredAt':'2026-04-01'}]
-    flat_summary,flat_months=measurement_summary_data(flat_rows,'A4CVD15I',['Chamber A'],'flatnessMeasurements','Diffuser',2026)
+    flat_summary,flat_months=measurement_summary_data(flat_rows,'A4CVD15I',['Chamber A','Chamber B'],'flatnessMeasurements','Diffuser',2026)
     assert flat_summary[0]['최신 측정일']=='2025-02-01'
     assert flat_summary[0]['최솟값']==0
+    assert flat_summary[0]['Center(R3C4)']==3
+    assert flat_summary[1]['Center(R3C4)'] is None
+    sus_grid=deepcopy(flat['grid']);sus_grid[2][3]=0
+    sus_rows=[{**flat,'type':'Susceptor','grid':sus_grid}]
+    sus,_=measurement_summary_data(sus_rows,'A4CVD15I',['Chamber A'],'flatnessMeasurements','Susceptor')
+    assert sus[0]['Center(R3C4)']==0
+    sus_grid[2][3]=None
+    sus,_=measurement_summary_data(sus_rows,'A4CVD15I',['Chamber A'],'flatnessMeasurements','Susceptor')
+    assert sus[0]['Center(R3C4)'] is None
     assert sum(r['Chamber A'] for r in flat_months)==0
     assert rows==before
 
@@ -420,6 +429,9 @@ def test_measurement_overview_ui_and_chamber_detail(tmp_path):
     assert not app.exception and any('Susceptor Flatness' in x.value for x in app.caption)
     summary=next(x.value for x in app.dataframe if '최신 측정일' in x.value.columns)
     assert summary.iloc[0]['최신 측정일']=='2026-04-01'
+    assert 'Center(R3C4)' in summary.columns
+    assert summary.iloc[0]['Center(R3C4)']=='3'
+    assert summary.iloc[1]['Center(R3C4)']=='—'
     app.selectbox(key='hw_chamber_A4CVD15I').set_value('Chamber A').run()
     assert not app.exception
     assert any('수치 직접 편집' in x.label for x in app.expander)

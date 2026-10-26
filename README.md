@@ -389,3 +389,7 @@ REV 관리의 메뉴·화면 이름을 PENDING List REV관리로 바꾸고 PENDI
 
 ## HW-24: REV 상세 출처 행 제거
 REV 상세 화면의 출처 행을 제거하고 항목명 16%·내용 84%로 너비를 조정했습니다. 원본 저장 데이터와 Pending 상세는 유지합니다. HW-23에서 app.py만 교체하세요.
+
+
+## HW-25: 부품명 중앙 정렬·Flatness Center 요약
+챔버별 장착 부품 통합 표의 부품명을 가로·세로 중앙 정렬했습니다. Diffuser/Susceptor의 챔버별 최신 측정 요약에 Center(R3C4)를 추가하여 각 챔버 최신 기록의 grid[2][3]을 표시합니다. 단위는 mils이며 0과 미측정(—)을 구분합니다. HW-24에서 app.py와 hw_ui.py만 교체하세요. 저장 데이터와 보정 JSON은 보존합니다.
