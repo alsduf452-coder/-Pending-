@@ -302,6 +302,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     with st.expander('수치 직접 편집 · 변경값은 위 위치도에 즉시 미리보기',expanded=st.session_state.get('measurement_edit_requested')==r['id']):
         data=pd.DataFrame(original_grid,columns=['좌','중앙','우'] if spacing else [f'Col {i}' for i in range(1,8)],index=['G/V 측','중앙','Window 측'] if spacing else [f'Row {i}' for i in range(1,6)]).astype(float)
         edited=st.data_editor(data,num_rows='fixed',use_container_width=True,key=editor_key)
+    save_panel=st.container() if not spacing else None
     draft_grid=[[None if pd.isna(v) else float(v) for v in row] for row in edited.to_numpy().tolist()]
     if spacing:
         draft_values=[None]*9
@@ -320,17 +321,19 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     if spacing:st.caption('885 mils는 AI Studio 원본의 시각 비교 기준입니다. 규격이나 양불 판정 기준이 아닙니다.')
     def reset_preview():st.session_state.pop(editor_key,None)
     st.button('입력 되돌리기 · 저장된 값',key=f'reset_{editor_key}',on_click=reset_preview)
-    if draft_grid!=original_grid:st.info('미저장 측정값이 있습니다. 아래에서 변경자를 입력하고 저장해주세요.')
-    with st.form(f'preview_save_{kind}_{r["id"]}_{r["_version"]}'):
-        actor=st.text_input('수치 변경자 *')
-        if st.form_submit_button('편집한 측정값 저장'):
-            try:
-                item={**r}
-                if spacing:item['values']=draft_values
-                else:item['grid']=draft_grid
-                store.save_record(path,kind,item,actor,r['_version'])
-                st.session_state['hw_saved']=f"측정값 저장 완료: {equipment} / {r['chamberId']} / {r['id']} · 백업에는 저장된 값이 반영됩니다.";st.rerun()
-            except Exception as exc:st.error(f'저장 실패: {exc}')
+    with (save_panel if save_panel is not None else st.container()):
+        if draft_grid!=original_grid:
+            st.markdown('<div class="measurement-unsaved" role="alert" style="color:#b91c1c;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:12px 14px;margin-bottom:10px;font-weight:600">미저장 측정값이 있습니다. 아래에서 변경자를 입력하고 저장해주세요.</div>',unsafe_allow_html=True)
+        with st.form(f'preview_save_{kind}_{r["id"]}_{r["_version"]}'):
+            actor=st.text_input('수치 변경자 *')
+            if st.form_submit_button('편집한 측정값 저장'):
+                try:
+                    item={**r}
+                    if spacing:item['values']=draft_values
+                    else:item['grid']=draft_grid
+                    store.save_record(path,kind,item,actor,r['_version'])
+                    st.session_state['hw_saved']=f"측정값 저장 완료: {equipment} / {r['chamberId']} / {r['id']} · 백업에는 저장된 값이 반영됩니다.";st.rerun()
+                except Exception as exc:st.error(f'저장 실패: {exc}')
     if spacing:table([{'차이':k,'측정값(mils)':v} for k,v in store.spacing_deltas(draft_values).items()])
     else:
         if r.get('maxMinSpan') is not None and r['maxMinSpan']!=store.flatness_span(r['grid']):st.info('백업에 저장된 Max−Min과 현재 측정값 계산이 다릅니다. 원본값을 자동 변경하지 않았습니다.')
