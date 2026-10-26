@@ -297,6 +297,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
     left,right=st.columns(2,gap='large')
     left_panel=left.empty();right_panel=right.empty()
     editor_key=f"preview_{kind}_{r['id']}_{r['_version']}"
+    st.caption(f"선택 기록: {r['id']} · DB 저장 버전: {r['_version']} · 수치 편집 후 아래 ‘편집한 측정값 저장’을 눌러야 백업에 반영됩니다.")
     original_grid=[[r['values'][p-1] for p in positions] for positions in store.POINT_LAYOUT] if spacing else r['grid']
     with st.expander('수치 직접 편집 · 변경값은 위 위치도에 즉시 미리보기',expanded=st.session_state.get('measurement_edit_requested')==r['id']):
         data=pd.DataFrame(original_grid,columns=['좌','중앙','우'] if spacing else [f'Col {i}' for i in range(1,8)],index=['G/V 측','중앙','Window 측'] if spacing else [f'Row {i}' for i in range(1,6)]).astype(float)
@@ -328,7 +329,7 @@ def measurement_view(path,kind,equipment,chamber,chambers,all_logs):
                 if spacing:item['values']=draft_values
                 else:item['grid']=draft_grid
                 store.save_record(path,kind,item,actor,r['_version'])
-                st.session_state['hw_saved']='측정값을 저장했습니다.';st.rerun()
+                st.session_state['hw_saved']=f"측정값 저장 완료: {equipment} / {r['chamberId']} / {r['id']} · 백업에는 저장된 값이 반영됩니다.";st.rerun()
             except Exception as exc:st.error(f'저장 실패: {exc}')
     if spacing:table([{'차이':k,'측정값(mils)':v} for k,v in store.spacing_deltas(draft_values).items()])
     else:
@@ -499,7 +500,31 @@ def hw_excel_bytes(path):
     return format_hw_workbook(buf.getvalue())
 
 
+def backup_signature(data_dir):
+    """현재 실행 폴더의 DB/Excel 변경을 감지합니다. 사용자 파일을 수정하지 않습니다."""
+    data_dir=Path(data_dir)
+    names=['pending.sqlite3','hw_history.sqlite3','default.xlsx','source.xlsx','pending.sqlite3-wal','hw_history.sqlite3-wal']
+    return tuple((str((data_dir/name).resolve()),(p.stat().st_size,p.stat().st_mtime_ns,p.stat().st_ino) if (p:=data_dir/name).exists() else None) for name in names)
+
+
+def prepare_full_backup(data_dir,state,force=False):
+    signature=backup_signature(data_dir)
+    if not force and state.get('hw_full_backup') and state.get('hw_full_backup_signature')==signature:
+        return False
+    content=full_backup(data_dir)
+    created=datetime.now(ZoneInfo('Asia/Seoul'))
+    state['hw_full_backup']=content
+    state['hw_full_backup_time']=created.strftime('%Y-%m-%d %H:%M:%S KST')
+    state['hw_full_backup_stamp']=created.strftime('%Y%m%d_%H%M%S_%f')
+    # 생성 도중 변경이 발생했다면 다음 화면 갱신에서 다시 생성합니다.
+    state['hw_full_backup_signature']=signature
+    return True
+
+
 def full_backup(data_dir):
+    import hashlib
+    data_dir=Path(data_dir)
+    manifest={'format':'pending-integrated-backup-v2','createdAt':datetime.now(ZoneInfo('Asia/Seoul')).isoformat(),'sourceDataDirectory':str(data_dir.resolve()),'files':{},'measurements':[]}
     buf=BytesIO()
     with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
         with ZipFile(buf,'w',ZIP_DEFLATED) as z:
@@ -512,9 +537,22 @@ def full_backup(data_dir):
                     try:conn.backup(dest)
                     finally:conn.close();dest.close()
                     z.write(target,'data/'+name)
+                    manifest['files']['data/'+name]={'sha256':hashlib.sha256(target.read_bytes()).hexdigest(),'bytes':target.stat().st_size}
+                    if name=='hw_history.sqlite3':
+                        saved=sqlite3.connect(target)
+                        try:
+                            for kind,identifier,payload,version in saved.execute("SELECT kind,id,payload,version FROM entities WHERE kind IN ('spacingMeasurements','flatnessMeasurements') ORDER BY kind,id"):
+                                item=json.loads(payload)
+                                values=item.get('grid') if kind=='flatnessMeasurements' else item.get('values')
+                                manifest['measurements'].append({'kind':kind,'id':identifier,'equipmentId':item.get('equipmentId'),'chamberId':item.get('chamberId'),'type':item.get('type'),'version':version,'valuesSha256':hashlib.sha256(json.dumps(values,allow_nan=False).encode()).hexdigest()})
+                        finally:saved.close()
             for name in ['default.xlsx','source.xlsx']:
-                if (data_dir/name).exists():z.write(data_dir/name,'data/'+name)
-            z.writestr('RESTORE.txt','앱 종료 후 data 폴더를 먼저 백업하고 이 ZIP의 data 폴더를 복사하세요. 코드와 가상환경은 별도 설치가 필요합니다. DB와 Excel은 같은 백업 묶음을 사용하세요.')
+                if (data_dir/name).exists():
+                    raw=(data_dir/name).read_bytes()
+                    z.writestr('data/'+name,raw)
+                    manifest['files']['data/'+name]={'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+            z.writestr('BACKUP_INFO.json',json.dumps(manifest,ensure_ascii=False,indent=2))
+            z.writestr('RESTORE.txt','앱을 Ctrl+C로 완전히 종료하세요. 기존 data 폴더를 별도 보관한 뒤 ZIP 안 data 폴더의 내용을 app.py 옆 data 폴더에 덮어쓰세요. 복원 대상은 app.py 옆 data/hw_history.sqlite3이며 data/data/hw_history.sqlite3가 되면 적용되지 않습니다. ZIP/JSON 파일만 실행 폴더에 복사해도 자동 복원되지 않습니다. DB와 Excel은 같은 백업 묶음을 사용하세요. BACKUP_INFO.json에 생성 시각·측정 기록 버전·파일 해시가 있습니다.')
     return buf.getvalue()
 
 
@@ -544,12 +582,22 @@ def data_management(path,data_dir):
     st.divider()
     st.download_button('H/W 전체 백업 JSON · 첨부·변경 이력 포함',store.backup_bytes(path),'HW_Full_Backup_'+today().isoformat()+'.json','application/json')
     st.caption('H/W 백업 JSON을 위 입력창에 올리면 비어 있는 저장소로 복원할 수 있습니다. 기존 ID는 덮어쓰지 않습니다.')
-    if st.button('Pending·REV·H/W 통합 백업 ZIP 준비'):
-        st.session_state['hw_full_backup']=full_backup(data_dir)
-        st.session_state['hw_full_backup_time']=datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
-    if st.session_state.get('hw_full_backup'):
-        st.caption('백업 생성 시각: '+st.session_state['hw_full_backup_time']+' · 이후 변경사항은 준비 버튼을 다시 눌러 반영하세요.')
-        st.download_button('통합 백업 ZIP 다운로드',st.session_state['hw_full_backup'],'Pending_HW_Backup_'+today().isoformat()+'.zip','application/zip')
+    try:
+        if st.button('Pending·REV·H/W 통합 백업 ZIP 준비'):
+            prepare_full_backup(data_dir,st.session_state,force=True)
+        if st.session_state.get('hw_full_backup'):
+            refreshed=prepare_full_backup(data_dir,st.session_state)
+            if refreshed:st.info('저장 데이터가 변경되어 통합 백업을 최신 상태로 자동 갱신했습니다.')
+            st.caption('백업 생성 시각: '+st.session_state['hw_full_backup_time']+' · 저장 완료된 DB 기준입니다. 미저장 편집값은 포함하지 않습니다.')
+            st.download_button('통합 백업 ZIP 다운로드',st.session_state['hw_full_backup'],'Pending_HW_Backup_'+st.session_state['hw_full_backup_stamp']+'.zip','application/zip')
+    except Exception as exc:
+        # 갱신 실패 시 이전 ZIP을 최신인 것처럼 다운로드하지 않습니다.
+        st.session_state.pop('hw_full_backup',None)
+        st.error(f'최신 백업 생성 실패: {exc}')
+    with st.expander('저장 위치·복원 확인'):
+        st.text(f'실행 코드: {Path(__file__).with_name("app.py").resolve()}')
+        st.text(f'H/W 저장 DB: {path.resolve()}')
+        st.caption('복원 후에도 값이 같으면 위 DB 파일을 덮어썼는지 확인하세요. 실행 중인 다른 복사 폴더나 data/data 폴더를 확인해주세요.')
     st.caption('통합 ZIP 복원: 앱을 종료하고 기존 data 폴더를 백업한 뒤 ZIP 안의 data 폴더를 복사합니다. 서로 다른 시각에 만든 DB와 Excel을 섞지 마세요. Temp의 파일은 정리될 수 있으므로 회사에서 허용한 위치에 백업하세요.')
     with st.expander('H/W 전체 변경 이력'):show_audit(path)
 

@@ -424,3 +424,79 @@ def test_measurement_overview_ui_and_chamber_detail(tmp_path):
     assert not app.exception
     assert any('수치 직접 편집' in x.label for x in app.expander)
     assert any('Susceptor Flatness 실측 데이터' in x.value for x in app.subheader)
+
+
+def test_prepared_backup_refresh_and_flatness_restore_45(tmp_path):
+    import hashlib
+    from hw_ui import prepare_full_backup
+    data=fixture()
+    data['equipments'][0]['id']='A4CVD45I'
+    data['equipments'][0]['name']='A4-2 6G PECVD System #45'
+    for kind in ['workLogs','spacingMeasurements','flatnessMeasurements']:
+        for r in data[kind]:r['equipmentId']='A4CVD45I'
+    old_grid=deepcopy(data['flatnessMeasurements'][0]['grid'])
+    data['flatnessMeasurements'][0].update(gridRows=[{'cells':row} for row in old_grid],gridJson=json.dumps(old_grid))
+    data['equipments'].append({**deepcopy(data['equipments'][0]),'id':'A4CVD15I'})
+    data['flatnessMeasurements'].append({**deepcopy(data['flatnessMeasurements'][0]),'id':'FL15','equipmentId':'A4CVD15I'})
+    folder=tmp_path/'data';folder.mkdir();db=folder/'hw_history.sqlite3'
+    hw.import_backup(db,encoded(data),'등록자')
+    state={}
+    assert prepare_full_backup(folder,state)
+    original_zip=state['hw_full_backup']
+    assert not prepare_full_backup(folder,state)
+    current=next(r for r in hw.records(db,'flatnessMeasurements') if r['id']=='FL1')
+    grid=deepcopy(current['grid']);grid[0][0]=-45;grid[0][1]=0
+    hw.save_record(db,'flatnessMeasurements',{**current,'grid':grid},'45호기 수정자',current['_version'])
+    assert prepare_full_backup(folder,state)
+    assert state['hw_full_backup']!=original_zip
+    with ZipFile(BytesIO(state['hw_full_backup'])) as z:
+        manifest=json.loads(z.read('BACKUP_INFO.json'))
+        raw=z.read('data/hw_history.sqlite3')
+        assert manifest['files']['data/hw_history.sqlite3']['sha256']==hashlib.sha256(raw).hexdigest()
+        assert next(r for r in manifest['measurements'] if r['id']=='FL1')['version']==2
+        restored=tmp_path/'restored.sqlite3';restored.write_bytes(raw)
+    records={r['id']:r for r in hw.records(restored,'flatnessMeasurements')}
+    assert records['FL1']['grid']==grid
+    assert records['FL1']['gridRows'][0]['cells'][:2]==[-45,0]
+    assert json.loads(records['FL1']['gridJson'])[0][:2]==[-45,0]
+    assert records['FL1']['grid'][1][1] is None
+    assert records['FL15']['grid']==old_grid
+    assert any(r['actor']=='45호기 수정자' for r in hw.audit_records(restored,'FL1'))
+    assert not prepare_full_backup(folder,state)
+
+
+def test_45_flatness_editor_backup_overwrite_restart(tmp_path):
+    db=setup_ui(tmp_path);data=fixture()
+    data['equipments'][0].update(id='A4CVD45I',name='A4-2 6G PECVD System #45')
+    for kind in ['workLogs','spacingMeasurements','flatnessMeasurements']:
+        for row in data[kind]:row['equipmentId']='A4CVD45I'
+    hw.import_backup(db,encoded(data),'등록자')
+    app=AppTest.from_file(tmp_path/'app.py',default_timeout=60).run()
+    app.button(key='nav_main_page_설비 H/W 이력관리').click().run()
+    app.button(key='nav_hw_section_데이터 관리').click().run()
+    next(b for b in app.button if b.label=='Pending·REV·H/W 통합 백업 ZIP 준비').click().run()
+    old_zip=app.session_state['hw_full_backup']
+    app.button(key='nav_hw_section_Flatness').click().run()
+    app.selectbox(key='hw_chamber_A4CVD45I').set_value('Chamber A').run()
+    app.session_state['preview_flatnessMeasurements_FL1_1']={'edited_rows':{0:{'Col 1':-45.0,'Col 2':0.0}},'added_rows':[],'deleted_rows':[]}
+    app.run()
+    next(x for x in app.text_input if x.label=='수치 변경자 *').set_value('45호기 수정자')
+    next(b for b in app.button if b.label=='편집한 측정값 저장').click().run()
+    assert not app.exception
+    assert hw.records(db,'flatnessMeasurements')[0]['grid'][0][:2]==[-45,0]
+    app.button(key='nav_hw_section_데이터 관리').click().run()
+    assert not app.exception
+    assert any('자동 갱신' in x.value for x in app.info)
+    new_zip=app.session_state['hw_full_backup']
+    assert new_zip!=old_zip
+    destination=tmp_path/'restored';destination.mkdir();restored_db=setup_ui(destination)
+    hw.import_backup(restored_db,encoded(data),'기존 데이터')
+    with ZipFile(BytesIO(new_zip)) as z:restored_db.write_bytes(z.read('data/hw_history.sqlite3'))
+    restarted=AppTest.from_file(destination/'app.py',default_timeout=60).run()
+    restarted.button(key='nav_main_page_설비 H/W 이력관리').click().run()
+    restarted.button(key='nav_hw_section_Flatness').click().run()
+    restarted.selectbox(key='hw_chamber_A4CVD45I').set_value('Chamber A').run()
+    assert not restarted.exception
+    assert any('DB 저장 버전: 2' in x.value for x in restarted.caption)
+    assert any('flatness-values' in x.value and '>-45<' in x.value for x in restarted.markdown)
+    assert hw.records(restored_db,'flatnessMeasurements')[0]['grid'][0][:2]==[-45,0]
