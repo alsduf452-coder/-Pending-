@@ -18,13 +18,13 @@ def test_title_and_visible_rev_navigation():
     app=AppTest.from_file('../app.py',default_timeout=60).run()
     assert not app.exception
     assert any(x.value=='양산 설비 통합 관리' for x in app.title)
-    assert any('HW-22' in x.value for x in app.caption)
+    assert any('HW-23' in x.value for x in app.caption)
     assert app.session_state['main_page']=='PENDING 현황'
-    assert [x.label for x in app.sidebar.button if x.key and x.key.startswith('nav_main_page_')]==['PENDING 현황','설비 H/W 이력관리','REV 관리']
+    assert [x.label for x in app.sidebar.button if x.key and x.key.startswith('nav_main_page_')]==['PENDING 현황','PENDING List REV관리','설비 H/W 이력관리']
     if not app.metric:app.radio(key='data_mode').set_value('샘플 데이터').run()
-    app.button(key='nav_main_page_'+'REV 관리').click().run()
+    app.button(key='nav_main_page_'+'PENDING List REV관리').click().run()
     assert not app.exception
-    assert any('REV 관리' in x.value for x in app.header)
+    assert any('PENDING List REV관리' in x.value for x in app.header)
     assert not any('표시 정리 내역' in x.label for x in app.expander)
     # 실제 데이터가 있는 환경에서는 요약과 18건 이력이 표시됩니다.
     from pathlib import Path
@@ -40,7 +40,7 @@ def test_title_and_visible_rev_navigation():
     app.button(key='nav_main_page_'+'PENDING 현황').click().run()
     assert not app.exception
     app.radio(key='data_mode').set_value('샘플 데이터').run()
-    app.button(key='nav_main_page_'+'REV 관리').click().run()
+    app.button(key='nav_main_page_'+'PENDING List REV관리').click().run()
     assert not app.exception
     assert any('샘플 데이터에는 REV 이력이 없습니다' in x.value for x in app.info)
 

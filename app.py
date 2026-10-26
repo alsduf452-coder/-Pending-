@@ -7,7 +7,7 @@ from pending_store import set_default, source_key, add_item, read_items, apply_e
 from pending_data import MAIN, load_pending, filter_pending, summary, safe_export, excel_bytes, load_revision, revision_display, revision_table_html, binary_status, drilldown_pending, pending_deadlines
 
 APP_NAME='양산 설비 통합 관리'
-APP_VERSION='HW-22'
+APP_VERSION='HW-23'
 LOGO_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8cba3d" d="M32 3 48 16 41 29 27 35 23 24Z"/><path fill="#f2b52d" d="M43 30 61 42 47 57 34 48 30 36Z"/><path fill="#a54c92" d="M29 36 42 48 28 61 13 48 19 38Z"/><path fill="#ed4641" d="M3 34 17 19 30 26 28 37 16 41Z"/></svg>'
 st.set_page_config(page_title=APP_NAME,page_icon=LOGO_SVG,layout='wide')
 
@@ -70,7 +70,7 @@ def parse_revision(data): return load_revision(data)
 st.sidebar.markdown(f'<div class="sidebar-brand">{LOGO_SVG}<span>{APP_NAME}</span></div>',unsafe_allow_html=True)
 st.sidebar.caption('PECVD 양산 설비 · 통합 조회')
 with st.sidebar:
-    page=card_menu('화면 선택',['PENDING 현황','설비 H/W 이력관리','REV 관리'],key='main_page')
+    page=card_menu('화면 선택',['PENDING 현황','PENDING List REV관리','설비 H/W 이력관리'],key='main_page')
 pending_filters=st.sidebar.container() if page=='PENDING 현황' else None
 upload = st.sidebar.file_uploader('Pending Excel 업로드',type=['xlsx'],help='파일 선택 또는 끌어놓기로 업로드합니다. 기본값 저장 버튼을 누르면 별도 복사본을 보관합니다.')
 local = Path(__file__).parent/'data'/'source.xlsx'
@@ -116,8 +116,8 @@ except Exception as exc:
     st.error(f'파일을 읽을 수 없습니다: {exc}')
     st.info('암호가 없는 .xlsx 파일인지, 원본과 동일한 시트·열 구조인지 확인해주세요.')
     st.stop()
-if page == 'REV 관리':
-    st.header('REV 관리 · 통합 이력')
+if page == 'PENDING List REV관리':
+    st.header('PENDING List REV관리 · 통합 이력')
     st.caption(f'데이터 출처: {source}')
     if mode == '샘플 데이터':
         st.info('샘플 데이터에는 REV 이력이 없습니다. 왼쪽에서 실제 Excel을 선택해주세요.')
@@ -128,7 +128,7 @@ if page == 'REV 관리':
         st.stop()
     st.subheader(revision['title'] or 'CVD15I / CVD45I Pending List 통합 이력 관리')
     st.caption(f"라인: {revision['line'] or '미기재'} · 공정: {revision['process'] or '미기재'} · 원본 시트: {revision['sheet']}")
-    st.info('요약표는 Excel 원본 기준입니다. 아래 REV 이력에는 화면에서 등록·수정한 내용도 포함됩니다. Pending 항목의 추가·수정은 REV에 자동 등록되지 않습니다.')
+    st.info('분야별 요약은 원본 Excel에 저장된 값입니다. PENDING 현황에서 추가·수정·완료 처리한 내용은 이 요약에 자동 반영되지 않습니다. 아래 REV 이력에는 화면에서 등록·수정한 내용도 포함되며, Pending 변경이 REV에 자동 등록되지는 않습니다.')
     totals=revision['summary']
     st.subheader('분야별 요약 · Excel 기준')
     # Excel과 같은 가로 배열. 저장된 수식 값이 없으면 추정하지 않습니다.
@@ -230,7 +230,7 @@ if page == 'REV 관리':
             st.download_button('REV 등록·변경 기록 CSV',safe_export(audit).to_csv(index=False).encode('utf-8-sig'),'rev_changes.csv','text/csv')
     st.stop()
 
-st.caption('Excel 첫 시트의 요약과 변경 이력은 위쪽 「REV 관리」 메뉴에서 볼 수 있습니다.')
+st.caption('Excel 첫 시트의 요약과 변경 이력은 위쪽 「PENDING List REV관리」 메뉴에서 볼 수 있습니다.')
 if mode == '실제 Excel':
     if upload is not None and st.sidebar.button('이 Excel을 기본값으로 저장'):
         try:
@@ -322,7 +322,7 @@ with st.container(key='pending_kpis'):
 st.caption('현재 필터 기준 · 완료율 = 완료 ÷ 전체')
 with st.expander('집계 및 완료 판정 기준'):
     st.write('완료는 상태 O/○/완료만 인정합니다. 고객사 요청 상단 표는 H/I 두 값이 모두 완료일 때 완료이며, 39행 이후 표는 J열을 사용합니다. 완료로 명시되지 않은 항목과 공란은 모두 미완료로 분류합니다.')
-    st.write('기본 집계는 HW(설계)·공정·SW·전장·기타만 포함합니다. 보조 시트는 별도 조회합니다. 날짜 기반 지연 판정은 하지 않습니다. REV 원본 요약은 REV 관리에서 확인할 수 있습니다.')
+    st.write('기본 집계는 HW(설계)·공정·SW·전장·기타만 포함합니다. 보조 시트는 별도 조회합니다. 날짜 기반 지연 판정은 하지 않습니다. REV 원본 요약은 PENDING List REV관리에서 확인할 수 있습니다.')
 if view.empty:
     st.info('조건에 맞는 항목이 없습니다. 필터 또는 검색어를 조정해주세요.')
 else:

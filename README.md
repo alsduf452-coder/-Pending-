@@ -381,3 +381,7 @@ Spacing/Flatness에서 H/W 챔버가 전체일 때는 챔버별 최신 측정 �
 
 ## HW-22: Flatness 저장 영역 배치
 Flatness의 수치 변경자와 저장 버튼을 수치 직접 편집 바로 아래로 옮겼습니다. 미저장 안내 문장은 빨간 글자와 연한 빨간 배경으로 표시합니다. 저장 로직과 보정 데이터는 유지합니다. HW-21에서 app.py와 hw_ui.py만 교체하세요. 기존 data와 measurement_correction.json은 보존합니다.
+
+
+## HW-23: PENDING List REV관리 메뉴
+REV 관리의 메뉴·화면 이름을 PENDING List REV관리로 바꾸고 PENDING 현황 바로 아래로 배치했습니다. 분야별 요약은 원본 Excel에 저장된 수식 결과이며 PENDING 현황의 SQLite 추가/수정/완료 처리는 자동 반영되지 않는다는 안내를 명확히 했습니다. 집계 방식은 변경하지 않았습니다. HW-22에서 app.py만 교체하세요. data와 보정 JSON은 보존합니다.
